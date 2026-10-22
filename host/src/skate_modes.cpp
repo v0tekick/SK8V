@@ -69,7 +69,7 @@ void Modes::Chords(std::uint16_t buttons, bool skating, bool menuOpen) {
         else if (!frames_.empty()) {
             Close(); tool_ = Tool::Replay;
             playhead_ = static_cast<float>(frames_.back().output.tick - ReplayStartTick());
-            playing_ = freeCamera_ = false; previousButtons_ = buttons; lastTickMs_ = 0;
+            playing_ = false; replayCamera_ = ReplayCamera::Follow; previousButtons_ = buttons; lastTickMs_ = 0;
             replayFov_ = 0.0f;
         }
     }
@@ -107,16 +107,103 @@ void Modes::DeletePreview(bool resetCandidate) {
     spawnFailures_ = 0;
 }
 
+bool Modes::IsPlacedObject(int entity) const {
+    return std::any_of(placed_.begin(), placed_.end(), [entity](const Placed& p) { return p.entity == entity; });
+}
+
+std::vector<int> Modes::PlacedObjects() const {
+    std::vector<int> out;
+    out.reserve(placed_.size());
+    for (const Placed& p : placed_) if (p.entity && Call<BOOL>(gta::DOES_ENTITY_EXIST, p.entity)) out.push_back(p.entity);
+    return out;
+}
+
+void Modes::DeleteFilmer() {
+    if (phone_ && Call<BOOL>(gta::DOES_ENTITY_EXIST, phone_)) Call<void>(gta::DELETE_OBJECT, &phone_);
+    if (filmer_ && Call<BOOL>(gta::DOES_ENTITY_EXIST, filmer_)) Call<void>(gta::DELETE_ENTITY, &filmer_);
+    phone_ = filmer_ = 0;
+    filmingAnimStarted_ = false;
+    lastFilmerMoveMs_ = 0;
+}
+
+void Modes::PhoneCamera(const SvPad& pad, int cam, const SvOutput& frame, float dt) {
+    if (!filmerModel_) filmerModel_ = util::Joaat("a_m_y_skater_01");
+    if (!phoneModel_) phoneModel_ = util::Joaat("prop_phone_ing");
+    if (!filmer_) {
+        Call<void>(gta::REQUEST_MODEL, filmerModel_);
+        if (!Call<BOOL>(gta::HAS_MODEL_LOADED, filmerModel_)) { CameraFrom(frame, cam, 1.0f); return; }
+        const float yaw = frame.skater_heading_degrees * 0.0174532925f;
+        const float x = frame.skater_position.x + std::sin(yaw)*3.0f;
+        const float y = frame.skater_position.y - std::cos(yaw)*3.0f;
+        filmer_ = Call<int>(gta::CREATE_PED, 4, filmerModel_, x, y, frame.skater_position.z,
+                            frame.skater_heading_degrees, false, false);
+        if (!filmer_ || !Call<BOOL>(gta::DOES_ENTITY_EXIST, filmer_)) { filmer_ = 0; CameraFrom(frame, cam, 1.0f); return; }
+        Call<void>(gta::SET_ENTITY_AS_MISSION_ENTITY, filmer_, true, false);
+        Call<void>(gta::SET_ENTITY_COLLISION, filmer_, false, false);
+        cameraYaw_ = frame.skater_heading_degrees + 180.0f;
+        cameraPitch_ = 0.0f;
+    }
+    if (!phone_) {
+        Call<void>(gta::REQUEST_MODEL, phoneModel_);
+        if (Call<BOOL>(gta::HAS_MODEL_LOADED, phoneModel_)) {
+            const Vector3 p = Call<Vector3>(gta::GET_ENTITY_COORDS, filmer_, true);
+            phone_ = Call<int>(gta::CREATE_OBJECT_NO_OFFSET, phoneModel_, p.x, p.y, p.z+1.4f, false, false, false, 0);
+            if (phone_ && Call<BOOL>(gta::DOES_ENTITY_EXIST, phone_)) {
+                Call<void>(gta::SET_ENTITY_AS_MISSION_ENTITY, phone_, true, false);
+                const int hand = Call<int>(gta::GET_PED_BONE_INDEX, filmer_, 0xDEAD); // right hand
+                Call<void>(gta::ATTACH_ENTITY_TO_ENTITY, phone_, filmer_, hand,
+                           0.04f, 0.02f, 0.01f, -90.0f, 0.0f, 0.0f, false, false, false, true, 2, true);
+            } else phone_ = 0;
+        }
+    }
+    if (!filmingAnimStarted_) {
+        constexpr const char* dict = "amb@world_human_stand_mobile@male@text@base";
+        Call<void>(gta::REQUEST_ANIM_DICT, dict);
+        if (Call<BOOL>(gta::HAS_ANIM_DICT_LOADED, dict)) {
+            Call<void>(gta::TASK_PLAY_ANIM, filmer_, dict, "base", 4.0f, -4.0f, -1, 49, 0.0f, false, false, false);
+            filmingAnimStarted_ = true;
+        }
+    }
+    // Let GTA walk the visible operator to the stick's target; the camera is
+    // anchored to their actual position, with only a little hand-held sway.
+    cameraYaw_ -= Axis(pad.right_x) * 100.0f * dt;
+    cameraPitch_ = std::clamp(cameraPitch_ + Axis(pad.right_y)*75.0f*dt, -70.0f, 70.0f);
+    const float yaw = cameraYaw_ * 0.0174532925f;
+    Vector3 p = Call<Vector3>(gta::GET_ENTITY_COORDS, filmer_, true);
+    const float f = FreeCameraAxis(pad.left_y), s = FreeCameraAxis(pad.left_x);
+    const float dx = -std::sin(yaw)*f + std::cos(yaw)*s;
+    const float dy = std::cos(yaw)*f + std::sin(yaw)*s;
+    const auto now = GetTickCount();
+    if (now - lastFilmerMoveMs_ > 250 && (std::abs(dx)+std::abs(dy) > 0.02f)) {
+        float targetZ = p.z;
+        Call<BOOL>(gta::GET_GROUND_Z_FOR_3D_COORD, p.x+dx*2.0f, p.y+dy*2.0f, p.z+4.0f, &targetZ, false, false);
+        Call<void>(gta::TASK_GO_STRAIGHT_TO_COORD, filmer_, p.x+dx*2.0f, p.y+dy*2.0f, targetZ,
+                   std::clamp(std::sqrt(dx*dx+dy*dy),0.25f,1.0f), -1, cameraYaw_+180.0f, 0.05f);
+        lastFilmerMoveMs_ = now;
+    }
+    if (lastFilmerMoveMs_ && now-lastFilmerMoveMs_ > 250 && std::abs(dx)+std::abs(dy) <= 0.02f) {
+        Call<void>(gta::TASK_GO_STRAIGHT_TO_COORD, filmer_, p.x, p.y, p.z, 0.1f, -1, cameraYaw_+180.0f, 0.05f);
+        lastFilmerMoveMs_ = 0;
+    }
+    const float t = static_cast<float>(now)*0.001f;
+    const float swayX = std::sin(t*7.3f)*0.010f + std::sin(t*13.1f)*0.004f;
+    const float swayY = std::sin(t*5.7f)*0.008f;
+    Call<void>(gta::SET_CAM_COORD, cam, p.x + swayX, p.y + swayY, p.z + 1.55f + std::sin(t*4.1f)*0.008f);
+    Call<void>(gta::SET_CAM_ROT, cam, cameraPitch_ + std::sin(t*8.9f)*0.16f, 0.0f,
+               cameraYaw_ + std::sin(t*6.7f)*0.18f, 2);
+}
+
 void Modes::Close() {
     if (tool_ == Tool::ObjectDropper) DeletePreview();
     if (tool_ == Tool::Replay) {
+        DeleteFilmer();
         gtaaudio::ReplayAudio(false, false, 0);
         replayfx::Set(0);
         // Replay owns the colour modifier while open.
         Call<void>(0x0F07E7745A236711ULL); // CLEAR_TIMECYCLE_MODIFIER
     }
     tool_ = Tool::None;
-    playing_ = freeCamera_ = false;
+    playing_ = false; replayCamera_ = ReplayCamera::Follow;
     releasePad_ = true;
     lastTickMs_ = 0;
 }
@@ -264,7 +351,7 @@ void Modes::ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
         const bool down = chord && (GetAsyncKeyState(keys[i]) & 0x8000);
         if (down && !keyboardHeld_[i]) {
             if (i == 0) hideReplayHud_ = !hideReplayHud_;
-            if (i == 1) replayEffect_ = (replayEffect_ + 1) % 5;
+            if (i == 1) replayEffect_ = (replayEffect_ + 1) % 11;
             if (i == 2) {
                 const std::uint64_t oldStart = ReplayStartTick();
                 const std::uint64_t wanted = oldStart + static_cast<std::uint64_t>(playhead_);
@@ -277,8 +364,9 @@ void Modes::ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
     }
     if (pressed & A) playing_ = !playing_;
     if (pressed & Y) {
-        freeCamera_ = !freeCamera_;
-        if (freeCamera_) {
+        replayCamera_ = static_cast<ReplayCamera>((static_cast<int>(replayCamera_) + 1) % 3);
+        if (replayCamera_ != ReplayCamera::Phone) DeleteFilmer();
+        if (replayCamera_ == ReplayCamera::Free) {
             const std::uint64_t wanted = ReplayStartTick() + static_cast<std::uint64_t>(playhead_);
             const auto found = std::lower_bound(frames_.begin(), frames_.end(), wanted,
                 [](const Frame& frame, std::uint64_t tick) { return frame.output.tick < tick; });
@@ -314,7 +402,8 @@ void Modes::ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
     baseFov = std::clamp(baseFov, 5.0f, 160.0f);
     if (fovChord && std::abs(triggerDelta) > 0.03f)
         replayFov_ = baseFov = std::clamp(baseFov + triggerDelta * 55.0f * dt, 5.0f, 160.0f);
-    if (!freeCamera_) CameraFrom(o, cam, baseFov / std::max(o.camera_fov, 0.01f));
+    if (replayCamera_ == ReplayCamera::Follow) CameraFrom(o, cam, baseFov / std::max(o.camera_fov, 0.01f));
+    else if (replayCamera_ == ReplayCamera::Phone) PhoneCamera(pad, cam, o, dt);
     else {
         cameraYaw_ -= Axis(pad.right_x) * 110.0f * dt;
         cameraPitch_ = std::clamp(cameraPitch_ + Axis(pad.right_y) * 90.0f * dt, -85.0f, 85.0f);
@@ -343,10 +432,11 @@ void Modes::ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
     std::snprintf(replayStatus, sizeof(replayStatus), "%s   %s BUFFER",
                   playing_ ? "PLAYING" : "PAUSED", ReplayLabels[replayDuration_]);
     Label(replayStatus, 0.212f, 0.034f, 0.30f);
-    static const char* effects[] = {"CLEAN", "GOPRO", "VHS", "FILM NOIR", "DOORBELL"};
+    static const char* effects[] = {"CLEAN", "GOPRO", "VHS", "FILM NOIR", "DOORBELL", "VHS 2", "SUPER 8", "SUNSET", "NIGHT SPOT", "BLEACH", "EARLY DIGITAL"};
     char cameraInfo[112];
     std::snprintf(cameraInfo, sizeof(cameraInfo), "%s CAMERA    %s    FOV %.0f",
-                  freeCamera_ ? "FREE" : "FOLLOW", effects[replayEffect_], baseFov);
+                  replayCamera_ == ReplayCamera::Free ? "FREE" : replayCamera_ == ReplayCamera::Phone ? "PHONE" : "FOLLOW",
+                  effects[replayEffect_], baseFov);
     gta::Text(cameraInfo, 0.0f, 0.028f, 0.31f, 227, 240, 255, 255, gta::Align::Right, 0.975f);
 
     const float begin = 0.055f, end = 0.945f, span = end - begin;
@@ -369,7 +459,7 @@ void Modes::ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
               0.29f, 224, 237, 248, 255, gta::Align::Right, 0.945f);
     Label("CTRL+SHIFT+D LENGTH    CTRL+SHIFT+E EFFECT    CTRL+SHIFT+H HIDE UI", begin, 0.940f, 0.25f);
     Label("LEFT/RIGHT FRAME", begin, 0.968f, 0.25f);
-    gta::Text("FREE CAM: STICKS LOOK/MOVE  LB/RB HEIGHT", 0.0f, 0.968f, 0.28f,
+    gta::Text("FREE/PHONE: STICKS LOOK/MOVE  FREE: LB/RB HEIGHT", 0.0f, 0.968f, 0.28f,
               158, 188, 215, 255, gta::Align::Right, 0.945f);
 }
 

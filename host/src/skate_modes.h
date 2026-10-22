@@ -41,7 +41,12 @@ private:
     bool objectChordWas_ = true, replayChordWas_ = true;
     bool releasePad_ = false;
     bool playing_ = false;
-    bool freeCamera_ = false;
+    enum class ReplayCamera { Follow, Free, Phone };
+    ReplayCamera replayCamera_ = ReplayCamera::Follow;
+    int filmer_ = 0, phone_ = 0;
+    bool filmingAnimStarted_ = false;
+    std::uint32_t lastFilmerMoveMs_ = 0;
+    std::uint32_t filmerModel_ = 0, phoneModel_ = 0;
     bool hideReplayHud_ = false;
     bool keyboardHeld_[3]{};
     unsigned replayDuration_ = 2; // 30 seconds; Ctrl+Shift+D cycles 10 seconds through 2 minutes.
@@ -65,6 +70,12 @@ private:
     void ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam, float dt, float fovScale);
     void MakePreview();
     void DeletePreview(bool resetCandidate = true);
+    void DeleteFilmer();
+    void PhoneCamera(const SvPad& pad, int cam, const SvOutput& frame, float dt);
+public:
+    bool IsPlacedObject(int entity) const;
+    std::vector<int> PlacedObjects() const;
+private:
     std::uint64_t ReplayStartTick() const;
 };
 

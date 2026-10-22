@@ -718,6 +718,10 @@ fn run(
     let mut right_stick = [0i16; 2];
     let mut line_player = crate::line::Player::default();
     let mut latest_dynamic = Vec::new();
+    let mut latest_placed_rails = Vec::new();
+    let mut placed_snapshot: Vec<(u32, u32, bevy_math::Vec3, [bevy_math::Vec3; 3])> = Vec::new();
+    let mut placed_triangle_count = 0usize;
+    let mut placed_dirty = false;
     // Skitch grab lines as last sampled by the host, and when. Skate ticks at
     // 60 Hz while host batches arrive at the game's frame rate; each tick
     // carries the lines forward by the car's velocity (`extrapolated_lines`),
@@ -782,6 +786,7 @@ fn run(
                 Ok(mut s) => {
                     apply_settings(&mut s, hom.enabled(), bail_limit, air_limit, lip_rule, difficulty, camera_type, prefs);
                     session = Some(s);
+                    placed_dirty = true;
                     life(shared, |l| {
                         l.session_builds += 1;
                         l.preparing = !l.prepared && tracked.is_some();
@@ -833,6 +838,7 @@ fn run(
                         apply_settings(&mut s, hom.enabled(), bail_limit, air_limit, lip_rule, difficulty, camera_type, prefs);
                         builder_jobs = Some(sender);
                         session = Some(s);
+                        placed_dirty = true;
                         audio_state = crate::audio::map::State::default();
                         built_at = spawn;
                     } else if world::needs_recentre(built_at, spawn) {
@@ -940,6 +946,20 @@ fn run(
                 Job::DynamicBodies(bodies) => {
                     let (triangles, messages) = prop_templates.triangles(&bodies, live_level.as_ref());
                     for message in messages { log(&message); }
+                    let mut snapshot: Vec<_> = bodies.iter().filter(|b| b.placed_grind)
+                        .map(|b| (b.fallback.tag, b.model, b.position, b.axes)).collect();
+                    snapshot.sort_by_key(|item| item.0);
+                    let placed_tags: std::collections::HashSet<u32> = bodies.iter()
+                        .filter(|b| b.placed_grind)
+                        .map(|b| b.fallback.tag | crate::dynamic::DYNAMIC_TAG).collect();
+                    let triangle_count = triangles.iter().filter(|(_, tag, _)| placed_tags.contains(tag)).count();
+                    if snapshot != placed_snapshot || triangle_count != placed_triangle_count {
+                        latest_placed_rails = crate::dynamic::placed_grind_rails(&bodies, &triangles);
+                        log(&format!("Object Dropper: {} placed triangles -> {} grind splines", triangle_count, latest_placed_rails.len()));
+                        placed_snapshot = snapshot;
+                        placed_triangle_count = triangle_count;
+                        placed_dirty = true;
+                    }
                     dynamic = Some(triangles);
                     entity_proxies = prop_templates.proxies(&bodies);
                     let lines = prop_templates.grab_lines(&bodies);
@@ -1222,6 +1242,7 @@ fn run(
                         apply_settings(&mut s, hom.enabled(), bail_limit, air_limit, lip_rule, difficulty, camera_type, prefs);
                         builder_jobs = Some(sender);
                         session = Some(s);
+                        placed_dirty = true;
                         audio_state = crate::audio::map::State::default();
                         built_at = at;
                         prepare_failed_at = None;
@@ -1240,6 +1261,11 @@ fn run(
         if let (Some(s), Some(triangles)) = (session.as_mut(), dynamic) {
             latest_dynamic = triangles;
             s.set_dynamic_surfaces(&latest_dynamic);
+        }
+        if let Some(s) = session.as_mut().filter(|_| placed_dirty) {
+            if let Err(e) = s.set_placed_rails(latest_placed_rails.clone()) {
+                log(&format!("Object Dropper grind splines rejected: {e}"));
+            } else { placed_dirty = false; }
         }
         if let (Some(s), Some(bodies)) = (session.as_mut(), host_bodies) {
             host_groups = bodies.iter().map(|b| (b.tag, b.collision_group)).collect();

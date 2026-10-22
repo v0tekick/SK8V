@@ -14,6 +14,8 @@ pub struct HostBody {
     pub axes: [Vec3; 3],
     pub fallback: HostBox,
     pub allow_box: bool,
+    /// Object Dropper placement: feed its exact lip geometry to Skate's grind provider.
+    pub placed_grind: bool,
     /// Host-sampled world velocities (GTA space, m/s and rad/s); `None` when
     /// the sample is not finite or implausible (no contact exchange).
     pub velocity: Option<(Vec3, Vec3)>,
@@ -39,7 +41,8 @@ impl HostBody {
         let grab_point = (b.grab_flags & 1 != 0)
             .then(|| v(b.grab_point))
             .filter(|p| p.is_finite());
-        Some(Self { model: b.model_hash, position, axes, fallback, allow_box: b.flags & 1 != 0, velocity, grab_point })
+        Some(Self { model: b.model_hash, position, axes, fallback, allow_box: b.flags & 1 != 0,
+            placed_grind: b.flags & 2 != 0, velocity, grab_point })
     }
 
     pub fn transform(&self, t: &svwc::Tri) -> ([[f32; 3]; 3], u32) {
@@ -292,6 +295,22 @@ impl Templates {
 /// High bit marks host entities in triangle tags; static map tags never set it.
 pub const DYNAMIC_TAG: u32 = 0x8000_0000;
 
+/// Convert the exact collision of Object Dropper's placed props into Skate's
+/// native grind splines. The same geometric lip finder handles map ledges;
+/// flat tops and open edges qualify, while vertical faces and ramp seams do not.
+pub fn placed_grind_rails(bodies: &[HostBody], triangles: &[([[f32; 3]; 3], u32, u32)]) -> Vec<Vec<[f32; 3]>> {
+    let tags: std::collections::HashSet<u32> = bodies.iter()
+        .filter(|b| b.placed_grind)
+        .map(|b| b.fallback.tag | DYNAMIC_TAG).collect();
+    if tags.is_empty() { return Vec::new(); }
+    let gta: Vec<[Vec3; 3]> = triangles.iter()
+        .filter(|(_, tag, _)| tags.contains(tag))
+        .map(|(points, _, _)| points.map(|p| coords::from_skate(Vec3::from_array(p))))
+        .collect();
+    let (rails, _) = crate::rails::find_metres(&gta);
+    rails.into_iter().map(|line| line.into_iter().map(|p| coords::to_skate(p).to_array()).collect()).collect()
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct HostBox {
     pub tag: u32,
@@ -358,6 +377,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn placed_ledge_registers_grind_lips_but_unplaced_dynamic_box_does_not() {
+        let fallback = HostBox { tag: 0x2000_0009, center: Vec3::new(0.0, 0.0, 0.6),
+            rotation: Quat::IDENTITY, half_extents: Vec3::new(1.5, 0.2, 0.6) };
+        let mut body = HostBody { model: 0, position: Vec3::ZERO,
+            axes: [Vec3::X, Vec3::Y, Vec3::Z], fallback, allow_box: true,
+            placed_grind: true, velocity: None, grab_point: None };
+        let triangles: Vec<_> = box_triangles(&fallback).into_iter()
+            .map(|(p, tag)| (p, tag, 0)).collect();
+        let rails = placed_grind_rails(&[body.clone()], &triangles);
+        assert!(rails.iter().any(|line| line.len() >= 2), "ledge top should supply a grind spline");
+        body.placed_grind = false;
+        assert!(placed_grind_rails(&[body], &triangles).is_empty());
+    }
+
+    #[test]
     fn cached_exact_mesh_wins_over_box_and_follows_entity_transform() {
         let root = std::env::temp_dir().join(format!("skatev-model-test-{}-{}", std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
@@ -367,7 +401,7 @@ mod tests {
         let authored = svwc::Tri { v: [[2.,0.,0.], [2.,1.,0.], [2.,0.,1.]], material: 3 };
         svwc::write(&mut std::fs::File::create(&file).unwrap(), &[authored], 64.).unwrap();
         let fallback = HostBox { tag: 19, center: Vec3::ZERO, rotation: Quat::IDENTITY, half_extents: Vec3::ONE };
-        let mut body = HostBody { model: 1, position: Vec3::ZERO, axes: [Vec3::X, Vec3::Y, Vec3::Z], fallback, allow_box: true, velocity: None, grab_point: None };
+        let mut body = HostBody { model: 1, position: Vec3::ZERO, axes: [Vec3::X, Vec3::Y, Vec3::Z], fallback, allow_box: true, placed_grind: false, velocity: None, grab_point: None };
         let mut models = Templates::new(&root.join("world.svwc"));
         let (first, messages) = models.triangles(&[body.clone()], None);
         assert_eq!(first[0].2, crate::materials::surface(3).packed());
@@ -393,7 +427,7 @@ mod tests {
     #[test]
     fn exact_bounds_preserve_gaps_and_full_affine_transform() {
         let fallback = HostBox { tag: 0x21234567, center: Vec3::ZERO, rotation: Quat::IDENTITY, half_extents: Vec3::ONE };
-        let body = HostBody { model: 1, position: Vec3::new(10.,20.,30.), axes: [Vec3::Y*2., -Vec3::X, Vec3::Z], fallback, allow_box: true, velocity: None, grab_point: None };
+        let body = HostBody { model: 1, position: Vec3::new(10.,20.,30.), axes: [Vec3::Y*2., -Vec3::X, Vec3::Z], fallback, allow_box: true, placed_grind: false, velocity: None, grab_point: None };
         let t = svwc::Tri { v: [[2.,0.,0.], [2.,1.,0.], [2.,0.,1.]], material: 3 };
         let (points, tag) = body.transform(&t);
         assert_eq!(tag, 0xA1234567);
@@ -408,7 +442,7 @@ mod tests {
         t.extents.insert(7, (Vec3::new(-1.0, -2.5, -0.6), Vec3::new(1.0, 2.5, 0.8)));
         let fallback = HostBox { tag: 0x0000_0042, center: Vec3::ZERO, rotation: Quat::IDENTITY, half_extents: Vec3::ONE };
         let body = HostBody { model: 7, position: Vec3::new(10.0, 20.0, 1.0), axes: [Vec3::X, Vec3::Y, Vec3::Z], fallback,
-            allow_box: false, velocity: Some((Vec3::new(0.0, 5.0, 0.0), Vec3::ZERO)), grab_point: Some(Vec3::new(10.2, 17.6, 0.7)) };
+            allow_box: false, placed_grind: false, velocity: Some((Vec3::new(0.0, 5.0, 0.0), Vec3::ZERO)), grab_point: Some(Vec3::new(10.2, 17.6, 0.7)) };
         let lines = t.grab_lines(&[body.clone()]);
         assert_eq!(lines.len(), 1);
         let l = &lines[0];
@@ -478,7 +512,7 @@ bad line
         let mut t = Templates { directory: PathBuf::new(), models: HashMap::new(), extents: HashMap::new(), misses: HashMap::new(), masses, standoff: 0.0 };
         let fallback = HostBox { tag: 9, center: Vec3::new(5.0, 6.0, 1.0), rotation: Quat::IDENTITY, half_extents: Vec3::new(1.0, 2.0, 0.5) };
         let body = HostBody { model: 0xeb70965f, position: Vec3::new(5.0, 6.0, 0.3), axes: [Vec3::X, Vec3::Y, Vec3::Z], fallback,
-            allow_box: true, velocity: Some((Vec3::new(0.0, 8.0, 0.0), Vec3::new(0.0, 0.0, 0.5))), grab_point: None };
+            allow_box: true, placed_grind: false, velocity: Some((Vec3::new(0.0, 8.0, 0.0), Vec3::new(0.0, 0.0, 0.5))), grab_point: None };
         let p = t.proxies(&[body.clone()]);
         assert_eq!(p.len(), 1);
         assert!((p[0].inverse_mass - 1.0 / 1200.0).abs() < 1e-9);

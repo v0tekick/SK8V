@@ -1,5 +1,12 @@
 # SK8V Story Mode fork changelog
 
+## 1.1.9.3
+
+- Object Dropper placements now feed their exact collision geometry through the same lip finder as Los Santos and register qualifying edges as Skate grind splines. Normal grind admission and scoring can then apply to ledges while ramps remain transitions.
+- Added VHS 2 with the existing VHS crop, scan, tint and grain, minus moving tracking strips and most RGB separation.
+- Replay Y now cycles follow, free and phone operator cameras. Phone mode creates a local skater ped with an attached phone prop, walks with the left stick, aims with the right stick and adds light handheld sway.
+- Added five Replay edit looks: Super 8, Sunset, Night Spot, Bleach Bypass and Early Digital. Ctrl+Shift+E cycles all eleven looks.
+
 ## 1.1.9.2.1
 
 - Restored GTA's native vehicle aim, fire and weapon switching by disabling the fork's LB weapon selector in vehicles and during vehicle entry. An open selector is cancelled on entering a vehicle without changing the selected weapon.

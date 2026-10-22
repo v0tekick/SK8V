@@ -2247,7 +2247,7 @@ void UpdateActive(Session& s, const Config& cfg, const SvPad& pad) {
         s.world.SetPedLaunch(cfg.pedLaunch, cfg.pedLaunchScale, cfg.pedLaunchLift, cfg.pedLaunchSpin);
         s.world.SetPedVoices(cfg.pedPain, cfg.pedGetUpSpeech);
         s.world.SetVehicleDamage(cfg.vehicleDamage, cfg.vehicleDamageScale, cfg.vehicleDamageMin, cfg.vehicleDamageRadius);
-        s.world.Gather(s.ped, s.last.board_position, cfg.dynamicRadius, boardnative::Entity());
+        s.world.Gather(s.ped, s.last.board_position, cfg.dynamicRadius, boardnative::Entity(), s.modes.PlacedObjects());
         if (const std::string line = s.world.TakePositionLog(); !line.empty()) Log(line.c_str());
         const auto& bodies = s.world.Bodies();
         g_runtime.SetDynamicBodies(bodies.data(), static_cast<std::uint32_t>(bodies.size()));

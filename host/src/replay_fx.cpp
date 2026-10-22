@@ -46,7 +46,7 @@ float4 PS(Vert i) : SV_Target {
     const float bottom = 0.855;
     if (uv.y < top || uv.y > bottom) {
         if (showUi != 0) return scene.Sample(linearClamp, uv);
-        if (effect == 2 || effect == 4) return float4(0,0,0,1);
+        if (effect == 2 || effect == 4 || effect == 5) return float4(0,0,0,1);
     }
     if (effect == 1) {
         // Barrel lens: sample increasingly far from the centre. The source
@@ -59,18 +59,18 @@ float4 PS(Vert i) : SV_Target {
         float aperture = 1 - smoothstep(1.22, 1.48, length(q));
         c *= aperture * (1 - 0.25 * smoothstep(0.35, 1.35, length(q)));
         c = saturate((c - 0.5) * 1.08 + 0.5);
-    } else if (effect == 2) {
+    } else if (effect == 2 || effect == 5) {
         // A real 4:3 crop uses the original source coordinates. Remapping the
         // full 16:9 image into the gate would squeeze every object in the shot.
         float halfWidth = min(0.5, (bottom-top) * (4.0/3.0) * size.y / size.x * 0.5);
         if (abs(uv.x - 0.5) > halfWidth) return float4(0,0,0,1);
         float2 gate = uv;
-        float tracking = smoothstep(0.015,0.0,abs(frac(uv.y * 0.7 - time * 0.12)-0.5));
-        gate.x += (hash(float2(floor(uv.y*size.y/3), floor(time*12))) - 0.5) * 0.003;
-        gate.x += tracking * 0.012;
-        float r = scene.Sample(linearClamp, gate + float2(0.002,0)).r;
+        float tracking = effect == 2 ? smoothstep(0.015,0.0,abs(frac(uv.y * 0.7 - time * 0.12)-0.5)) : 0.0;
+        if (effect == 2) gate.x += (hash(float2(floor(uv.y*size.y/3), floor(time*12))) - 0.5) * 0.003 + tracking * 0.012;
+        float stereo = effect == 2 ? 0.002 : 0.0002;
+        float r = scene.Sample(linearClamp, gate + float2(stereo,0)).r;
         float g = scene.Sample(linearClamp, gate).g;
-        float b = scene.Sample(linearClamp, gate - float2(0.002,0)).b;
+        float b = scene.Sample(linearClamp, gate - float2(stereo,0)).b;
         c = float3(r,g,b);
         float scan = 0.90 + 0.10 * sin(uv.y * size.y * 3.14159);
         float noise = (hash(floor(uv*size) + floor(time*29)) - 0.5) * 0.09;
@@ -90,6 +90,33 @@ float4 PS(Vert i) : SV_Target {
         c *= 1.0 - 0.32*smoothstep(0.55,1.0,radius);
         c *= 1.0 - smoothstep(0.965,1.0,radius);
         c += (hash(floor(uv*size)+floor(time*8))-0.5)*0.018;
+    } else if (effect >= 6 && effect <= 10) {
+        c = scene.Sample(linearClamp, uv).rgb;
+        float luma = dot(c, float3(0.2126,0.7152,0.0722));
+        float grain = hash(floor(uv * size) + floor(time * 24.0)) - 0.5;
+        float vignette = smoothstep(0.55, 1.35, length((uv-0.5)*2.0));
+        if (effect == 6) { // Super 8: warm faded emulsion and fine grain.
+            c = lerp(c, float3(luma*1.13,luma*0.99,luma*0.75),0.38);
+            c = saturate((c-0.5)*0.91+0.54 + grain*0.035);
+            c *= 1.0 - vignette*0.22;
+        } else if (effect == 7) { // Sunset: amber highlights, cool shadows.
+            c = saturate((c-0.5)*1.09+0.5);
+            c = lerp(c, c * float3(1.19,1.04,0.79), saturate(luma));
+            c = lerp(c, c * float3(0.83,0.96,1.13), 1.0-saturate(luma));
+        } else if (effect == 8) { // Night spot: cyan shadows, magenta lights.
+            c = saturate((c-0.5)*1.20+0.48);
+            c = lerp(c, c*float3(0.61,1.12,1.27), 0.58*(1.0-saturate(luma)));
+            c = lerp(c, c*float3(1.18,0.73,1.13), 0.38*saturate(luma));
+            c *= 1.0-vignette*0.15;
+        } else if (effect == 9) { // Bleach bypass: silvery low saturation.
+            c = lerp(float3(luma,luma,luma),c,0.22);
+            c = saturate((c-0.5)*1.32+0.5+grain*0.012);
+        } else { // Early digital: cool highlights, block noise and a subtle vignette.
+            c = saturate((c-0.5)*1.06+0.5);
+            c *= float3(0.91,1.02,1.14);
+            c += (hash(floor(uv*size/3.0)+floor(time*16.0))-0.5)*0.025;
+            c *= 1.0-vignette*0.12;
+        }
     } else if (effect == 0) {
         c = scene.Sample(linearClamp,uv).rgb;
     } else {
@@ -138,7 +165,7 @@ bool Prepare(ID3D11Device* d) {
 
 void Set(int effect, bool uiVisible) {
     showUi.store(uiVisible, std::memory_order_release);
-    selected.store(std::clamp(effect,0,4),std::memory_order_release);
+    selected.store(std::clamp(effect,0,10),std::memory_order_release);
 }
 
 void Present(IDXGISwapChain* chain) {

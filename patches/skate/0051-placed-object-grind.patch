@@ -1,0 +1,84 @@
+diff --git a/crates/skate-host/src/physics/bridge.rs b/crates/skate-host/src/physics/bridge.rs
+index 9ef9b6a..b7b1e8e 100644
+--- a/crates/skate-host/src/physics/bridge.rs
++++ b/crates/skate-host/src/physics/bridge.rs
+@@ -41,6 +41,8 @@ pub struct Session {
+     /// SkateV skitching: per grab line tag, the model height the line was
+     /// raised to (kept while that line is held).
+     grab_heights: std::collections::HashMap<u32, f32>,
++    base_rails: Vec<Vec<[f32; 3]>>,
++    placed_rails: Vec<Vec<[f32; 3]>>,
+ }
+ pub struct Pose {
+     pub root: Mat4,
+@@ -76,6 +78,7 @@ impl Session {
+         skate_data::input_config::StockGameplayConfig::load(root).map_err(|e| e.to_string())?;
+         let assets = skate_data::GameAssets::load(root).map_err(|e| e.to_string())?;
+         let graphs = StockGraphs::load(root, &assets)?;
++        let base_rails = rails.clone();
+         let map = collision_map(triangles, tags, rails, spawn, heading);
+         eprintln!("IW4L_SKATE_LOAD graphs {}ms", started.elapsed().as_millis());
+         let physics = GamePhysics::load_with_map(root, Some(&map))?;
+@@ -95,6 +98,8 @@ impl Session {
+             markers: crate::session_marker::Runtime::load(root)?,
+             audio_settings: audio::Settings::load(root)?,
+             grab_heights: Default::default(),
++            base_rails,
++            placed_rails: Vec::new(),
+         })
+     }
+     /// A builder for collision to swap in later, usable on another thread.
+@@ -106,11 +111,30 @@ impl Session {
+     /// Swaps in collision built by `collision_builder`: the world the skater
+     /// rides, climbs and grinds from the next tick.
+     pub fn install_collision(&mut self, prepared: PreparedCollision) -> Result<(), String> {
++        self.base_rails = prepared.rails;
++        let grind = if self.placed_rails.is_empty() { prepared.grind }
++            else { self.combined_grind_provider()? };
+         self.physics
+-            .install_world(prepared.world, std::sync::Arc::clone(&prepared.grind))?;
+-        self.skater.trajectory.bind_grind_world(prepared.grind);
++            .install_world(prepared.world, std::sync::Arc::clone(&grind))?;
++        self.skater.trajectory.bind_grind_world(grind);
+         Ok(())
+     }
++    /// Object Dropper lips use the same authored spline admission as map lips.
++    /// Called only when the set of placed geometry changes, not every frame.
++    pub fn set_placed_rails(&mut self, rails: Vec<Vec<[f32; 3]>>) -> Result<(), String> {
++        self.placed_rails = rails;
++        let grind = self.combined_grind_provider()?;
++        self.physics.grind_world = std::sync::Arc::clone(&grind);
++        self.skater.trajectory.bind_grind_world(grind);
++        Ok(())
++    }
++    fn combined_grind_provider(&self) -> Result<std::sync::Arc<crate::grind_world::StaticProvider>, String> {
++        use skate_data::skate_map::Rail;
++        let rails: Vec<Rail> = self.base_rails.iter().chain(&self.placed_rails).enumerate()
++            .map(|(i, points)| Rail { name: format!("skatev_lip_{i}"), closed: false,
++                points: points.clone(), native: None }).collect();
++        crate::grind_world::StaticProvider::authored(&rails).map(std::sync::Arc::new)
++    }
+     pub fn period(&self) -> f32 {
+         self.physics.period().as_secs_f32()
+     }
+@@ -444,6 +468,7 @@ pub struct QuirkState {
+ pub struct PreparedCollision {
+     world: skate_core::physics::board_world::BoardWorld,
+     grind: std::sync::Arc<crate::grind_world::StaticProvider>,
++    rails: Vec<Vec<[f32; 3]>>,
+ }
+ 
+ #[derive(Clone, Copy)]
+@@ -482,10 +507,12 @@ impl CollisionBuilder {
+         tags: Vec<u32>,
+         rails: Vec<Vec<[f32; 3]>>,
+     ) -> Result<PreparedCollision, String> {
++        let saved_rails = rails.clone();
+         let map = collision_map(triangles, tags, rails, [0.; 3], 0.);
+         Ok(PreparedCollision {
+             world: crate::skate_world::collision_world(&map, self.material)?,
+             grind: std::sync::Arc::new(crate::grind_world::StaticProvider::new(Some(&map))?),
++            rails: saved_rails,
+         })
+     }
+ }

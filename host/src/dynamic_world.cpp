@@ -188,7 +188,8 @@ bool DynamicWorld::AddBody(int entity, EntityKind kind) {
     return true;
 }
 
-void DynamicWorld::Gather(int self, SvVec3 center, float radius, int presentationEntity) {
+void DynamicWorld::Gather(int self, SvVec3 center, float radius, int presentationEntity,
+                          const std::vector<int>& placedObjects) {
     if (doorRefs_.size() > 4096) doorRefs_.clear(); // handles of long-gone objects
     bodies_.clear();
     parts_.clear();
@@ -226,6 +227,11 @@ void DynamicWorld::Gather(int self, SvVec3 center, float radius, int presentatio
             continue;
         }
         if (!AddBody(c.entity, c.kind)) continue;
+        // Only Object Dropper's placed props become authored grind geometry.
+        // Other GTA objects retain their existing dynamic collision behavior.
+        if (c.kind == EntityKind::Object &&
+            std::find(placedObjects.begin(), placedObjects.end(), c.entity) != placedObjects.end())
+            bodies_.back().flags |= 2u;
         switch (c.kind) {
         case EntityKind::Vehicle: ++stats_.vehicles; break;
         case EntityKind::Ped: ++stats_.peds; break;
