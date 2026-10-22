@@ -16,19 +16,31 @@ using gta::Call;
 constexpr std::uint16_t Up = 0x0001, Left = 0x0004, Right = 0x0008;
 constexpr std::uint16_t LB = 0x0100, RB = 0x0200, R3 = 0x0080;
 constexpr std::uint16_t A = 0x1000, B = 0x2000, X = 0x4000, Y = 0x8000;
-constexpr unsigned MaxFrames = 1800; // 30 seconds at Skate's 60 Hz
+constexpr unsigned MaxFrames = 7200; // Keep two minutes at Skate's 60 Hz; replay chooses a shorter window.
+constexpr unsigned ReplaySeconds[] = {10, 15, 30, 45, 60, 90, 120};
+constexpr const char* ReplayLabels[] = {"10s", "15s", "30s", "45s", "60s", "1m30s", "2m"};
 struct Model { const char* name; const char* candidates[3]; };
 constexpr Model Catalog[] = {
-    {"Small ramp", {"prop_mp_ramp_01", "stt_prop_ramp_jump_s", "prop_skate_flatramp"}},
-    {"Medium ramp", {"prop_mp_ramp_02", "stt_prop_ramp_jump_m", "prop_skate_quartpipe"}},
-    {"Large ramp", {"prop_mp_ramp_03", "stt_prop_ramp_jump_l", "prop_skate_halfpipe"}},
-    {"Quarter pipe", {"stt_prop_stunt_bblock_qp", "stt_prop_stunt_bblock_qp2", "prop_skate_quartpipe"}},
-    {"Funbox", {"stt_prop_stunt_bblock_mdm1", "stt_prop_stunt_bblock_sml1", "prop_skate_funbox"}},
-    {"Rail", {"prop_skate_rail", "prop_fnclink_03e", "prop_fnclink_02a"}},
+    // These models have exact dynamic collision templates in the prepared GTA Legacy world cache.
+    {"Small ramp", {"prop_mp_ramp_01"}},
+    {"Medium ramp", {"prop_mp_ramp_02"}},
+    {"Large ramp", {"prop_mp_ramp_03"}},
+    {"Park bench", {"prop_bench_01a", "prop_bench_01b", "prop_bench_01c"}},
+    {"Picnic table", {"prop_picnictable_01", "prop_picnictable_02"}},
+    {"Concrete barrier", {"prop_barier_conc_05b", "prop_barier_conc_05a", "prop_barier_conc_04a"}},
+    {"Pallet pad", {"prop_pallet_01a", "prop_pallet_02a", "prop_pallet_03a"}},
+    {"Box stack", {"prop_boxpile_01a", "prop_boxpile_03a", "prop_boxpile_04a"}},
 };
 float Axis(std::int16_t value) {
     const float normalized = static_cast<float>(value) / 32767.0f;
     return std::copysign(std::max(0.0f, (std::abs(normalized) - 0.18f) / 0.82f), normalized);
+}
+float FreeCameraAxis(std::int16_t value) {
+    // Square the travel beyond a small deadzone: tiny stick deflections give
+    // fine dolly movement, while full deflection still reaches the old speed.
+    const float normalized = std::clamp(static_cast<float>(value) / 32767.0f, -1.0f, 1.0f);
+    const float travel = std::clamp((std::abs(normalized) - 0.12f) / 0.88f, 0.0f, 1.0f);
+    return std::copysign(travel * travel, normalized);
 }
 void Label(const char* text, float x, float y, float scale = 0.32f) {
     gta::Text(text, x, y, scale, 235, 245, 255, 255, gta::Align::Left);
@@ -37,7 +49,7 @@ void CameraFrom(const SvOutput& o, int cam, float fovScale) {
     if (!cam || !o.camera_valid) return;
     Call<void>(gta::SET_CAM_COORD, cam, o.camera_position.x, o.camera_position.y, o.camera_position.z);
     Call<void>(gta::SET_CAM_ROT, cam, o.camera_rotation.x, o.camera_rotation.y, o.camera_rotation.z, 2);
-    Call<void>(gta::SET_CAM_FOV, cam, std::clamp(o.camera_fov * fovScale, 20.0f, 120.0f));
+    Call<void>(gta::SET_CAM_FOV, cam, std::clamp(o.camera_fov * fovScale, 5.0f, 160.0f));
 }
 } // namespace
 
@@ -56,11 +68,18 @@ void Modes::Chords(std::uint16_t buttons, bool skating, bool menuOpen) {
         if (tool_ == Tool::Replay) Close();
         else if (!frames_.empty()) {
             Close(); tool_ = Tool::Replay;
-            playhead_ = static_cast<float>(frames_.back().output.tick - frames_.front().output.tick);
+            playhead_ = static_cast<float>(frames_.back().output.tick - ReplayStartTick());
             playing_ = freeCamera_ = false; previousButtons_ = buttons; lastTickMs_ = 0;
             replayFov_ = 0.0f;
         }
     }
+}
+
+std::uint64_t Modes::ReplayStartTick() const {
+    if (frames_.empty()) return 0;
+    const std::uint64_t latest = frames_.back().output.tick;
+    const std::uint64_t requested = static_cast<std::uint64_t>(ReplaySeconds[replayDuration_]) * 60;
+    return (std::max)(frames_.front().output.tick, latest > requested ? latest - requested : 0);
 }
 
 void Modes::Record(const SvOutput& output, const float* bones, std::uint32_t boneCount,
@@ -79,12 +98,13 @@ void Modes::Record(const SvOutput& output, const float* bones, std::uint32_t bon
             frames_.size() > MaxFrames)) frames_.pop_front();
 }
 
-void Modes::DeletePreview() {
+void Modes::DeletePreview(bool resetCandidate) {
     if (preview_ && Call<BOOL>(gta::DOES_ENTITY_EXIST, preview_))
         Call<void>(gta::DELETE_OBJECT, &preview_);
     preview_ = 0;
     previewModelHash_ = 0;
-    candidate_ = spawnFailures_ = 0;
+    if (resetCandidate) candidate_ = 0;
+    spawnFailures_ = 0;
 }
 
 void Modes::Close() {
@@ -134,14 +154,14 @@ void Modes::EnterObject(int ped) {
 
 void Modes::MakePreview() {
     const auto& item = Catalog[catalog_];
-    if (candidate_ >= std::size(item.candidates)) {
+    if (candidate_ >= std::size(item.candidates) || !item.candidates[candidate_]) {
         previewStatus_ = "No placeable model for this item";
         return;
     }
     const char* modelName = item.candidates[candidate_];
     const std::uint32_t model = util::Joaat(modelName);
     if (requestedModel_ != model) {
-        DeletePreview();
+        DeletePreview(false);
         requestedModel_ = model;
         lastSpawnAttemptMs_ = 0;
     }
@@ -161,10 +181,8 @@ void Modes::MakePreview() {
         const auto now = GetTickCount();
         if (lastSpawnAttemptMs_ && now - lastSpawnAttemptMs_ < 750) return;
         lastSpawnAttemptMs_ = now;
-        // The original skate props loaded but did not create in the user's
-        // Story Mode session. Try the standard
-        // object factory and a separate set of creator/stunt models first;
-        // use NO_OFFSET only as a fallback on the same candidate.
+        // GTA may report a model loaded but refuse the first object factory.
+        // Try NO_OFFSET on the same candidate before moving to the next one.
         const int created = Call<int>(gta::CREATE_OBJECT, model, previewX_, previewY_, previewZ_, false, false, false, 0);
         preview_ = created && Call<BOOL>(gta::DOES_ENTITY_EXIST, created) ? created : 0;
         if (!preview_) {
@@ -202,8 +220,8 @@ void Modes::MakePreview() {
 
 void Modes::ObjectTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam, float dt) {
     if (pressed & B) { Close(); return; }
-    if (pressed & Left) { catalog_ = (catalog_ + static_cast<int>(std::size(Catalog)) - 1) % static_cast<int>(std::size(Catalog)); DeletePreview(); candidate_ = spawnFailures_ = 0; }
-    if (pressed & Right) { catalog_ = (catalog_ + 1) % static_cast<int>(std::size(Catalog)); DeletePreview(); candidate_ = spawnFailures_ = 0; }
+    if (pressed & Left) { catalog_ = (catalog_ + static_cast<int>(std::size(Catalog)) - 1) % static_cast<int>(std::size(Catalog)); DeletePreview(); }
+    if (pressed & Right) { catalog_ = (catalog_ + 1) % static_cast<int>(std::size(Catalog)); DeletePreview(); }
     const Vector3 rot = cam ? Call<Vector3>(gta::GET_CAM_ROT, cam, 2) : Call<Vector3>(gta::GET_GAMEPLAY_CAM_ROT, 2);
     const float yaw = rot.z * 0.0174532925f;
     const float forward = Axis(pad.left_y) * 5.0f * dt;
@@ -226,7 +244,7 @@ void Modes::ObjectTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
         placed_.pop_back();
     }
     char status[160];
-    const char* activeModel = candidate_ < std::size(Catalog[catalog_].candidates)
+    const char* activeModel = candidate_ < std::size(Catalog[catalog_].candidates) && Catalog[catalog_].candidates[candidate_]
         ? Catalog[catalog_].candidates[candidate_] : "unavailable";
     std::snprintf(status, sizeof(status), "OBJECT DROPPER  %s (%s)   placed %zu",
                   Catalog[catalog_].name, activeModel, placed_.size());
@@ -240,11 +258,28 @@ void Modes::ObjectTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
 void Modes::ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam, float dt, float fovScale) {
     if (pressed & B) { Close(); return; }
     if (frames_.empty()) { Close(); return; }
+    const bool chord = (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_SHIFT) & 0x8000);
+    const int keys[3] = {'H', 'E', 'D'};
+    for (int i = 0; i < 3; ++i) {
+        const bool down = chord && (GetAsyncKeyState(keys[i]) & 0x8000);
+        if (down && !keyboardHeld_[i]) {
+            if (i == 0) hideReplayHud_ = !hideReplayHud_;
+            if (i == 1) replayEffect_ = (replayEffect_ + 1) % 5;
+            if (i == 2) {
+                const std::uint64_t oldStart = ReplayStartTick();
+                const std::uint64_t wanted = oldStart + static_cast<std::uint64_t>(playhead_);
+                replayDuration_ = (replayDuration_ + 1) % std::size(ReplaySeconds);
+                const std::uint64_t newStart = ReplayStartTick();
+                playhead_ = wanted > newStart ? static_cast<float>(wanted - newStart) : 0.0f;
+            }
+        }
+        keyboardHeld_[i] = down;
+    }
     if (pressed & A) playing_ = !playing_;
     if (pressed & Y) {
         freeCamera_ = !freeCamera_;
         if (freeCamera_) {
-            const std::uint64_t wanted = frames_.front().output.tick + static_cast<std::uint64_t>(playhead_);
+            const std::uint64_t wanted = ReplayStartTick() + static_cast<std::uint64_t>(playhead_);
             const auto found = std::lower_bound(frames_.begin(), frames_.end(), wanted,
                 [](const Frame& frame, std::uint64_t tick) { return frame.output.tick < tick; });
             const auto& o = (found == frames_.end() ? frames_.back() : *found).output;
@@ -259,10 +294,11 @@ void Modes::ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
     const float scrub = fovChord ? 0.0f : triggerDelta;
     if (std::abs(scrub) > 0.05f) playhead_ += scrub * 240.0f * dt, playing_ = false;
     else if (playing_) playhead_ += 60.0f * dt;
-    const float durationTicks = static_cast<float>(frames_.back().output.tick - frames_.front().output.tick);
+    const std::uint64_t startTick = ReplayStartTick();
+    const float durationTicks = static_cast<float>(frames_.back().output.tick - startTick);
     playhead_ = std::clamp(playhead_, 0.0f, durationTicks);
     if (playhead_ >= durationTicks) playing_ = false;
-    const std::uint64_t wanted = frames_.front().output.tick + static_cast<std::uint64_t>(playhead_);
+    const std::uint64_t wanted = startTick + static_cast<std::uint64_t>(playhead_);
     const auto found = std::lower_bound(frames_.begin(), frames_.end(), wanted,
         [](const Frame& recorded, std::uint64_t tick) { return recorded.output.tick < tick; });
     const Frame& frame = found == frames_.end() ? frames_.back() : *found;
@@ -272,28 +308,19 @@ void Modes::ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
     Call<void>(gta::SET_ENTITY_HEADING, ped, o.skater_heading_degrees + 180.0f);
     if (!frame.bones.empty()) posehook::PublishPose(frame.bones.data(), static_cast<int>(frame.bones.size() / 16));
     boardnative::Tick(frame.hasBoard, frame.board);
-    const bool chord = (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_SHIFT) & 0x8000);
-    const int keys[2] = {'H', 'E'};
-    for (int i = 0; i < 2; ++i) {
-        const bool down = chord && (GetAsyncKeyState(keys[i]) & 0x8000);
-        if (down && !keyboardHeld_[i]) {
-            if (i == 0) hideReplayHud_ = !hideReplayHud_;
-            if (i == 1) replayEffect_ = (replayEffect_ + 1) % 5;
-        }
-        keyboardHeld_[i] = down;
-    }
     float baseFov = replayFov_ ? replayFov_ :
         (replayEffect_ == 1 ? std::max(o.camera_fov * fovScale, 110.0f) :
          replayEffect_ == 4 ? std::max(o.camera_fov * fovScale, 115.0f) : o.camera_fov * fovScale);
+    baseFov = std::clamp(baseFov, 5.0f, 160.0f);
     if (fovChord && std::abs(triggerDelta) > 0.03f)
-        replayFov_ = baseFov = std::clamp(baseFov + triggerDelta * 55.0f * dt, 25.0f, 120.0f);
+        replayFov_ = baseFov = std::clamp(baseFov + triggerDelta * 55.0f * dt, 5.0f, 160.0f);
     if (!freeCamera_) CameraFrom(o, cam, baseFov / std::max(o.camera_fov, 0.01f));
     else {
         cameraYaw_ -= Axis(pad.right_x) * 110.0f * dt;
         cameraPitch_ = std::clamp(cameraPitch_ + Axis(pad.right_y) * 90.0f * dt, -85.0f, 85.0f);
         const float yaw = cameraYaw_ * 0.0174532925f;
-        const float forward = Axis(pad.left_y) * 5.0f * dt;
-        const float sideways = Axis(pad.left_x) * 5.0f * dt;
+        const float forward = FreeCameraAxis(pad.left_y) * 5.0f * dt;
+        const float sideways = FreeCameraAxis(pad.left_x) * 5.0f * dt;
         cameraX_ += -std::sin(yaw) * forward + std::cos(yaw) * sideways;
         cameraY_ += std::cos(yaw) * forward + std::sin(yaw) * sideways;
         cameraZ_ += ((pad.buttons & RB ? 1.0f : 0.0f) - (pad.buttons & LB ? 1.0f : 0.0f)) * 3.0f * dt;
@@ -312,7 +339,10 @@ void Modes::ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
     Call<void>(gta::DRAW_RECT, 0.5f, 0.9275f, 1.0f, 0.145f, 9, 15, 24, 255, false);
     Call<void>(gta::DRAW_RECT, 0.025f, 0.041f, 0.005f, 0.052f, 33, 156, 255, 255, false);
     gta::Text("REPLAY", 0.038f, 0.009f, 0.67f, 245, 250, 255, 255, gta::Align::Left);
-    Label(playing_ ? "PLAYING" : "PAUSED", 0.212f, 0.034f, 0.30f);
+    char replayStatus[48];
+    std::snprintf(replayStatus, sizeof(replayStatus), "%s   %s BUFFER",
+                  playing_ ? "PLAYING" : "PAUSED", ReplayLabels[replayDuration_]);
+    Label(replayStatus, 0.212f, 0.034f, 0.30f);
     static const char* effects[] = {"CLEAN", "GOPRO", "VHS", "FILM NOIR", "DOORBELL"};
     char cameraInfo[112];
     std::snprintf(cameraInfo, sizeof(cameraInfo), "%s CAMERA    %s    FOV %.0f",
@@ -337,8 +367,9 @@ void Modes::ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam
     Label(times, begin, 0.909f, 0.31f);
     gta::Text("LT/RT SCRUB    RS + LT/RT FOV    A PLAY    Y CAMERA    B EXIT", 0.0f, 0.908f,
               0.29f, 224, 237, 248, 255, gta::Align::Right, 0.945f);
-    Label("LEFT/RIGHT FRAME    CTRL+SHIFT+E EFFECT    CTRL+SHIFT+H HIDE UI", begin, 0.956f, 0.28f);
-    gta::Text("FREE CAM: STICKS LOOK/MOVE  LB/RB HEIGHT", 0.0f, 0.956f, 0.28f,
+    Label("CTRL+SHIFT+D LENGTH    CTRL+SHIFT+E EFFECT    CTRL+SHIFT+H HIDE UI", begin, 0.940f, 0.25f);
+    Label("LEFT/RIGHT FRAME", begin, 0.968f, 0.25f);
+    gta::Text("FREE CAM: STICKS LOOK/MOVE  LB/RB HEIGHT", 0.0f, 0.968f, 0.28f,
               158, 188, 215, 255, gta::Align::Right, 0.945f);
 }
 

@@ -43,7 +43,8 @@ private:
     bool playing_ = false;
     bool freeCamera_ = false;
     bool hideReplayHud_ = false;
-    bool keyboardHeld_[2]{};
+    bool keyboardHeld_[3]{};
+    unsigned replayDuration_ = 2; // 30 seconds; Ctrl+Shift+D cycles 10 seconds through 2 minutes.
     float replayFov_ = 0.0f;
     int replayEffect_ = 0;
     float playhead_ = 0.0f;
@@ -63,7 +64,8 @@ private:
     void ObjectTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam, float dt);
     void ReplayTick(const SvPad& pad, std::uint16_t pressed, int ped, int cam, float dt, float fovScale);
     void MakePreview();
-    void DeletePreview();
+    void DeletePreview(bool resetCandidate = true);
+    std::uint64_t ReplayStartTick() const;
 };
 
 } // namespace skatemodes

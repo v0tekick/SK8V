@@ -1,5 +1,12 @@
 # SK8V Story Mode fork changelog
 
+## 1.1.9.2
+
+- Added replay recording windows of 10, 15, 30, 45, 60, 90 and 120 seconds, selected with Ctrl+Shift+D during Replay. The rolling recorder retains the maximum two minutes, so a longer window is available immediately after changing it.
+- Shaped free camera left-stick travel for finer low-speed movement near the center while preserving full-speed movement at the edge.
+- Extended Replay FOV control to 5°–160° for every camera effect.
+- Removed the oversized, noncolliding quarter pipe and unavailable rail/fence entries. Added benches, picnic tables, concrete barriers, pallet pads and box stacks with prepared collision templates.
+
 ## 1.1.9-story-fork.1
 
 Based on Becaring's SK8V 1.1.9. GTA V Legacy Story Mode only.

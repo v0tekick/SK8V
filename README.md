@@ -62,11 +62,12 @@ Swimming switches to GTA automatically and returns to Skate afterward. **Hall of
 | Hold LB outside Skate | Open the fork's owned-weapon wheel, including in a vehicle |
 | RS click + D-pad right while skating | Open Object Dropper |
 | RS click + D-pad up while skating | Open the 30-second Replay |
-| RS click + LT/RT during Replay | Adjust camera FOV smoothly |
+| RS click + LT/RT during Replay | Adjust camera FOV smoothly from 5° to 160° |
+| Ctrl+Shift+D during Replay | Cycle the recording window: 10, 15, 30, 45, 60, 90 or 120 seconds |
 | Ctrl+Shift+E during Replay | Cycle camera effects, including GoPro, VHS and doorbell fisheye |
 | Ctrl+Shift+H during Replay | Hide or show all HUD |
 
-Object Dropper uses GTA creator/stunt props as substitutes for Skate 3's full park catalog. Replay is the fork's own rolling recording, not Rockstar Editor.
+Object Dropper offers ramps, benches, picnic tables, concrete barriers, pallet pads and box stacks. These are GTA props with prepared collision templates, as substitutes for Skate 3's full park catalog. Replay retains up to two minutes of skating, with a finer left-stick movement curve near the center in free camera mode. It is the fork's own rolling recording, not Rockstar Editor.
 
 ### Unable to save settings in the menu?
 
