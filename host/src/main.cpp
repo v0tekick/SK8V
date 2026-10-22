@@ -27,6 +27,7 @@
 #include "hud_overlay.h"
 #include "records_ui.h"
 #include "lifecycle.h"
+#include "skate_modes.h"
 #include "thread_census.h"
 #include "menu.h"
 #include "ps_pad.h"
@@ -629,6 +630,7 @@ constexpr Hash kBoardWeapon = 0x38A8F85C;
 
 struct Session {
     LifeState state = LifeState::Unprepared;
+    skatemodes::Modes modes;
     boardtracks::Tracks tracks;
     unsigned trackMarks = 0;
     struct { int decal; DWORD checkAt; } firstTrack{};
@@ -685,6 +687,17 @@ struct Session {
     bool boardWeaponWas = false;
     DWORD boardGrantAt = 0;
     bool boardWeaponMissingLogged = false;
+    // GTA weapon wheel while falling, swimming, or in a vehicle. LB remains
+    // its ordinary wheel hold; this stores the selected fallback when GTA's
+    // own weapon task is unavailable in the current ped state.
+    bool portableWheelOpen = false;
+    bool portableWheelMoved = false;
+    Hash portableWheelFirst = 0;
+    Hash portableWheelLast = 0;
+    Hash portableWheelPick = 0;
+    int portableWheelSlice = -1;
+    bool portableWheelCustom = false;
+    Hash pendingVehicleWeapon = 0; // GTA may defer a wheel choice until the ped exits a vehicle
     // Crimes (ReportShootings): last shots-fired report, last scan, peds already reported.
     DWORD shotsReportedAt = 0;
     DWORD crimeScanAt = 0;
@@ -975,6 +988,7 @@ void NearMiss(Session& s, const Config& cfg, const std::vector<SvDynamicBody>& b
 // Otherwise (menu, death, runtime error, network) the ped is put where the
 // skater last was.
 void Leave(Session& s, const Config& cfg, const char* why, bool voluntary) {
+    s.modes.Reset();
     if (!SkateOwnsPlayer(s)) return;
     const bool wasSkating = s.state == LifeState::Skating;
     SetState(s, LifeState::Leaving, why);
@@ -1229,8 +1243,18 @@ void TryEnter(Session& s, const Config& cfg, bool strict) {
     }
     SvSpawn spawn{};
     spawn.size = sizeof(spawn);
-    spawn.position = GroundUnder(ped);
-    spawn.position.z += 0.05f;
+    const Vector3 gtaPosition = Call<Vector3>(gta::GET_ENTITY_COORDS, ped, 1);
+    const Vector3 gtaVelocity = Call<Vector3>(gta::GET_ENTITY_VELOCITY, ped);
+    const SvVec3 ground = GroundUnder(ped);
+    const bool airborne = Call<BOOL>(gta::IS_PED_FALLING, ped) || Call<BOOL>(gta::IS_PED_JUMPING, ped) ||
+                          Call<BOOL>(gta::IS_PED_IN_PARACHUTE_FREE_FALL, ped) ||
+                          Call<BOOL>(gta::IS_PED_RAGDOLL, ped) || gtaPosition.z - ground.z > 0.8f;
+    spawn.airborne = airborne ? 1u : 0u;
+    spawn.position = airborne ? SvVec3{gtaPosition.x, gtaPosition.y, gtaPosition.z} : ground;
+    if (!airborne) spawn.position.z += 0.05f;
+    spawn.velocity = {gtaVelocity.x, gtaVelocity.y, gtaVelocity.z};
+    if (!std::isfinite(spawn.velocity.x) || !std::isfinite(spawn.velocity.y) || !std::isfinite(spawn.velocity.z))
+        spawn.velocity = {};
     spawn.heading_degrees = Call<float>(gta::GET_ENTITY_HEADING, ped);
     s.facing = spawn.heading_degrees;
     s.poseHeading = NAN;
@@ -1257,7 +1281,9 @@ void TryEnter(Session& s, const Config& cfg, bool strict) {
     // The runtime solves Skate's pose on the character's skeleton.
     SendCharacter(s, g_config);
     SetState(s, LifeState::Entering, strict ? "board action" : "menu");
-    Logf("SkateV Legacy: entering off the board at %.2f %.2f %.2f heading %.1f", spawn.position.x, spawn.position.y, spawn.position.z, spawn.heading_degrees);
+    Logf("SkateV Legacy: entering %s at %.2f %.2f %.2f heading %.1f velocity %.2f %.2f %.2f",
+         airborne ? "on the board in air" : "off the board", spawn.position.x, spawn.position.y,
+         spawn.position.z, spawn.heading_degrees, spawn.velocity.x, spawn.velocity.y, spawn.velocity.z);
 }
 
 // Tells the runtime which GTA character wears Skate's pose: the player's own
@@ -1367,6 +1393,143 @@ bool BoardWeaponTick(Session& s, Ped player) {
     const bool picked = selected && !s.boardWeaponWas;
     s.boardWeaponWas = selected;
     return picked;
+}
+
+struct PortableChoice { Hash hash = 0; const char* name = "EMPTY"; };
+PortableChoice PortableOwned(Ped ped, int slice) {
+    struct Entry { Hash hash; const char* name; int slice; };
+    static constexpr Entry catalog[] = {
+        {util::Joaat("WEAPON_PISTOL"), "PISTOL", 0}, {util::Joaat("WEAPON_COMBATPISTOL"), "COMBAT PISTOL", 0},
+        {util::Joaat("WEAPON_APPISTOL"), "AP PISTOL", 0}, {util::Joaat("WEAPON_PISTOL50"), "PISTOL .50", 0},
+        {util::Joaat("WEAPON_SNSPISTOL"), "SNS PISTOL", 0}, {util::Joaat("WEAPON_HEAVYPISTOL"), "HEAVY PISTOL", 0},
+        {util::Joaat("WEAPON_VINTAGEPISTOL"), "VINTAGE PISTOL", 0}, {util::Joaat("WEAPON_REVOLVER"), "REVOLVER", 0},
+        {util::Joaat("WEAPON_MICROSMG"), "MICRO SMG", 1}, {util::Joaat("WEAPON_SMG"), "SMG", 1},
+        {util::Joaat("WEAPON_ASSAULTSMG"), "ASSAULT SMG", 1}, {util::Joaat("WEAPON_COMBATPDW"), "COMBAT PDW", 1},
+        {util::Joaat("WEAPON_MACHINEPISTOL"), "MACHINE PISTOL", 1},
+        {util::Joaat("WEAPON_ASSAULTRIFLE"), "ASSAULT RIFLE", 2}, {util::Joaat("WEAPON_CARBINERIFLE"), "CARBINE RIFLE", 2},
+        {util::Joaat("WEAPON_ADVANCEDRIFLE"), "ADVANCED RIFLE", 2}, {util::Joaat("WEAPON_SPECIALCARBINE"), "SPECIAL CARBINE", 2},
+        {util::Joaat("WEAPON_BULLPUPRIFLE"), "BULLPUP RIFLE", 2}, {util::Joaat("WEAPON_COMPACTRIFLE"), "COMPACT RIFLE", 2},
+        {util::Joaat("WEAPON_SNIPERRIFLE"), "SNIPER RIFLE", 3}, {util::Joaat("WEAPON_HEAVYSNIPER"), "HEAVY SNIPER", 3},
+        {util::Joaat("WEAPON_MARKSMANRIFLE"), "MARKSMAN RIFLE", 3},
+        {kBoardWeapon, "SKATEBOARD", 4}, {0xA2719263, "UNARMED", 4},
+        {util::Joaat("WEAPON_PUMPSHOTGUN"), "PUMP SHOTGUN", 5}, {util::Joaat("WEAPON_SAWNOFFSHOTGUN"), "SAWN-OFF", 5},
+        {util::Joaat("WEAPON_ASSAULTSHOTGUN"), "ASSAULT SHOTGUN", 5}, {util::Joaat("WEAPON_BULLPUPSHOTGUN"), "BULLPUP SHOTGUN", 5},
+        {util::Joaat("WEAPON_HEAVYSHOTGUN"), "HEAVY SHOTGUN", 5},
+        {util::Joaat("WEAPON_MG"), "MG", 6}, {util::Joaat("WEAPON_COMBATMG"), "COMBAT MG", 6},
+        {util::Joaat("WEAPON_RPG"), "RPG", 6}, {util::Joaat("WEAPON_GRENADELAUNCHER"), "GRENADE LAUNCHER", 6},
+        {util::Joaat("WEAPON_MINIGUN"), "MINIGUN", 6}, {util::Joaat("WEAPON_HOMINGLAUNCHER"), "HOMING LAUNCHER", 6},
+        {util::Joaat("WEAPON_GRENADE"), "GRENADE", 7}, {util::Joaat("WEAPON_STICKYBOMB"), "STICKY BOMB", 7},
+        {util::Joaat("WEAPON_MOLOTOV"), "MOLOTOV", 7}, {util::Joaat("WEAPON_PROXMINE"), "PROX MINE", 7},
+        {util::Joaat("WEAPON_PIPEBOMB"), "PIPE BOMB", 7},
+    };
+    const Hash current = Call<Hash>(gta::GET_SELECTED_PED_WEAPON, ped);
+    PortableChoice first{};
+    for (const Entry& e : catalog) {
+        if (e.slice != slice || (e.hash != 0xA2719263 && !Call<BOOL>(gta::HAS_PED_GOT_WEAPON, ped, e.hash, 0))) continue;
+        if (slice == 4 && e.hash == kBoardWeapon) return {e.hash, e.name};
+        if (e.hash == current) return {e.hash, e.name};
+        if (!first.hash) first = {e.hash, e.name};
+    }
+    return first;
+}
+
+void PortableWeaponWheel(Session& s, Ped player, std::uint16_t buttons, unsigned menuChord) {
+    const bool inVehicle = Call<BOOL>(gta::IS_PED_IN_ANY_VEHICLE, player, 0);
+    if (s.pendingVehicleWeapon && !inVehicle) {
+        if (Call<BOOL>(gta::HAS_PED_GOT_WEAPON, player, s.pendingVehicleWeapon, 0))
+            Call<void>(gta::SET_CURRENT_PED_WEAPON, player, s.pendingVehicleWeapon, 1);
+        s.pendingVehicleWeapon = 0;
+    }
+    const bool menuHeld = menuChord && (buttons & menuChord) == menuChord;
+    const bool held = (buttons & 0x0100) && !menuHeld && !menu::IsOpen() &&
+                      !Call<BOOL>(gta::IS_PAUSE_MENU_ACTIVE) &&
+                      !Call<BOOL>(gta::GET_IS_LOADING_SCREEN_ACTIVE);
+    if (!held) {
+        if (s.portableWheelOpen) {
+            if (!s.portableWheelCustom) Call<void>(gta::HUD_FORCE_WEAPON_WHEEL, 0);
+            if (!s.portableWheelCustom && s.portableWheelMoved && s.portableWheelLast)
+                s.portableWheelPick = s.portableWheelLast;
+            if (s.portableWheelPick && Call<BOOL>(gta::HAS_PED_GOT_WEAPON, player, s.portableWheelPick, 0)) {
+                Call<void>(gta::SET_CURRENT_PED_WEAPON, player, s.portableWheelPick, 1);
+                if (inVehicle) {
+                    Call<BOOL>(gta::SET_CURRENT_PED_VEHICLE_WEAPON, player, s.portableWheelPick);
+                    s.pendingVehicleWeapon = s.portableWheelPick;
+                }
+            }
+            s.portableWheelOpen = false;
+            Logf("SkateV Legacy: portable weapon wheel picked 0x%08X", static_cast<unsigned>(s.portableWheelPick));
+        }
+        return;
+    }
+    if (!s.portableWheelOpen) {
+        s.portableWheelOpen = true;
+        s.pendingVehicleWeapon = 0;
+        s.portableWheelMoved = false;
+        s.portableWheelFirst = s.portableWheelLast = 0;
+        s.portableWheelPick = Call<Hash>(gta::GET_SELECTED_PED_WEAPON, player);
+        s.portableWheelSlice = -1;
+        s.portableWheelCustom = true;
+    }
+    if (!s.portableWheelCustom) {
+        Call<void>(gta::ENABLE_CONTROL_ACTION, 0, 37, 1);
+        Call<BOOL>(gta::SET_CONTROL_VALUE_NEXT_FRAME, 0, 37, 1.0f);
+        Call<void>(gta::HUD_FORCE_WEAPON_WHEEL, 1);
+        Call<void>(gta::SHOW_HUD_COMPONENT_THIS_FRAME, 19);
+        const Hash lit = Call<Hash>(gta::HUD_GET_WEAPON_WHEEL_CURRENTLY_HIGHLIGHTED);
+        if (lit) {
+            if (!s.portableWheelFirst) s.portableWheelFirst = lit;
+            else if (lit != s.portableWheelFirst) s.portableWheelMoved = true;
+            s.portableWheelLast = lit;
+        }
+    } else {
+        // GTA may show an empty or inactive native wheel outside ordinary
+        // on-foot tasks. Use one owned-weapon selector consistently.
+        Call<void>(gta::HUD_FORCE_WEAPON_WHEEL, 0);
+        Call<void>(gta::DISABLE_CONTROL_ACTION, 0, 37, 1);
+        Call<void>(gta::DISABLE_CONTROL_ACTION, 0, 68, 1); // vehicle aim
+        Call<void>(0x6806C51AD12B83B8ULL, 19); // hide native wheel
+    }
+    // In some GTA states the HUD opens without an active ped weapon task.
+    // The visible right-stick slice still selects its top-slot weapon.
+    if (s.portableWheelCustom || !s.portableWheelMoved) {
+        const SvPad pad = ReadPadRaw();
+        const float x = pad.right_x / 32767.0f, y = pad.right_y / 32767.0f;
+        if (x * x + y * y > 0.25f) {
+            static const Hash groups[8][2] = {{0x18D5FA97, 0x18D5FA97}, {0xC6E9A5C5, 0x451B04BC},
+                {0x39D5C192, 0x39D5C192}, {0xB7BBD827, 0xB7BBD827},
+                {0xD49321D4, 0xA00FC1E4}, {0x33431399, 0x33431399},
+                {0xA27A4F9F, 0xA27A4F9F}, {0x5C4C5883, 0x5C4C5883}};
+            const float degrees = std::atan2(x, y) * 57.29578f;
+            const int slice = static_cast<int>(std::lround((degrees < 0 ? degrees + 360.0f : degrees) / 45.0f)) % 8;
+            s.portableWheelSlice = slice;
+            const PortableChoice choice = PortableOwned(player, slice);
+            s.portableWheelPick = choice.hash;
+            static DWORD nextLog = 0;
+            if (GetTickCount() >= nextLog) {
+                Logf("SkateV Legacy: portable wheel stick %d,%d slice %d available %s hash %08x", pad.right_x,
+                     pad.right_y, slice, choice.name, static_cast<unsigned>(choice.hash));
+                nextLog = GetTickCount() + 500;
+            }
+        }
+    }
+    if (s.portableWheelCustom) {
+        static const char* names[8] = {"PISTOL", "SMG", "RIFLE", "SNIPER", "SKATEBOARD", "SHOTGUN", "HEAVY", "THROWN"};
+        Call<void>(gta::DRAW_RECT, 0.5f, 0.45f, 0.18f, 0.07f, 15, 15, 18, 205);
+        Text("WEAPON WHEEL", 0.5f, 0.429f, 0.35f, 255, 255, 255, true);
+        const PortableChoice selected = s.portableWheelSlice >= 0 ? PortableOwned(player, s.portableWheelSlice) : PortableChoice{};
+        Text(s.portableWheelSlice >= 0 ? selected.name : "RIGHT STICK: SELECT", 0.5f, 0.456f, 0.32f, 255, 180, 80, true);
+        for (int i = 0; i < 8; ++i) {
+            const float angle = static_cast<float>(i) * 0.785398163f;
+            const float cx = 0.5f + std::sin(angle) * 0.17f;
+            const float cy = 0.45f - std::cos(angle) * 0.22f;
+            const bool highlighted = s.portableWheelSlice == i;
+            Call<void>(gta::DRAW_RECT, cx, cy, 0.105f, 0.043f, highlighted ? 230 : 18,
+                       highlighted ? 120 : 18, highlighted ? 35 : 22, 215);
+            const PortableChoice owned = PortableOwned(player, i);
+            Text(owned.hash ? owned.name : names[i], cx, cy - 0.011f, 0.30f, owned.hash ? 255 : 130,
+                 owned.hash ? 255 : 130, owned.hash ? 255 : 130, true);
+        }
+    }
 }
 
 void StopAim(Session& s, bool restoreCam) {
@@ -2018,6 +2181,8 @@ void BoardWeather(Session& s, const Config& cfg, const SvBoardPose* pose) {
 }
 
 void UpdateActive(Session& s, const Config& cfg, const SvPad& pad) {
+    static std::vector<float> s_pose(512 * 16);
+    std::uint32_t poseCount = 0;
     Lap(kPartLifecycle);
     DisableSkateControls(pad.buttons, s.aiming);
     Lap(kPartControls);
@@ -2212,10 +2377,10 @@ void UpdateActive(Session& s, const Config& cfg, const SvPad& pad) {
                 s_boneData = 0;
             }
         }
-        static std::vector<float> s_pose(512 * 16);
         const std::uint32_t n = g_runtime.CharacterPose(s_pose.data(), 512);
         const bool posed = n > 0 && static_cast<int>(n) == s_bones;
         if (posed) {
+            poseCount = n;
             posehook::PublishPose(s_pose.data(), static_cast<int>(n));
             ImpactGrunts(s, cfg, s_pose.data(), s_hitBones, o.tick);
             float h;
@@ -2290,13 +2455,15 @@ void UpdateActive(Session& s, const Config& cfg, const SvPad& pad) {
         g_runtime.Score(score);
         DrawHud(o, score, true);
     }
+    s.modes.Record(o, poseCount ? s_pose.data() : nullptr, poseCount,
+                   boardPose.bone_count == 7 ? &boardPose : nullptr);
     Lap(kPartBoard);
 }
 
 // One script frame of the lifecycle state machine (lifecycle.h). `f6`: the
 // dev shortcut, mapped onto the same transitions (enter without the
 // controller confirmation window; leave immediately, forced).
-void LifecycleFrame(Session& s, const Config& cfg, bool f6) {
+void LifecycleFrame(Session& s, const Config& cfg, bool f6, bool instantSkate) {
     const DWORD now = GetTickCount();
     // No script frames for a while (Rockstar Editor, a pause that stops scripts): the state's
     // timeouts don't count that time (a 52 s gap timed out a take-out at once, 2026-10-11).
@@ -2361,9 +2528,9 @@ void LifecycleFrame(Session& s, const Config& cfg, bool f6) {
             Call<void>(gta::DISABLE_CONTROL_ACTION, 0, 23, 1); // INPUT_ENTER
             if (pad.buttons & 0x8000) s.suppressEnterUntil = now + 100;
         }
-        const bool wheel = BoardWeaponTick(s, player);
+        const bool wheel = s.portableWheelOpen ? false : BoardWeaponTick(s, player);
         if (wheel) Log("SkateV Legacy: board picked in the weapon wheel");
-        if (f6 || wheel) TryEnter(s, cfg, !f6);
+        if (f6 || instantSkate || wheel) TryEnter(s, cfg, !(f6 || instantSkate));
         // Refused (vehicle, water, ...): no invisible weapon left in hand.
         if (wheel && s.state == LifeState::Ready) Call<void>(gta::SET_CURRENT_PED_WEAPON, player, 0xA2719263, 1);
         break;
@@ -2430,7 +2597,20 @@ void LifecycleFrame(Session& s, const Config& cfg, bool f6) {
         break;
     }
     case LifeState::Skating: {
-        const SvPad pad = ReadPad(); // once per frame
+        SvPad pad = ReadPad(); // once per frame
+        if (s.modes.Active()) {
+            if (player != s.ped || !Call<BOOL>(gta::DOES_ENTITY_EXIST, s.ped) ||
+                Call<BOOL>(gta::IS_ENTITY_DEAD, s.ped, 0) || Call<BOOL>(gta::NETWORK_IS_SESSION_STARTED)) {
+                Leave(s, cfg, "modal tool interrupted", false);
+            } else {
+                DisableSkateControls(pad.buttons, false);
+                s.modes.Tick(pad, s.ped, s.cam, cfg.fovScale);
+                if (!s.modes.Active()) s.placedValid = false; // replay moved only the presentation ped
+                s.watchSince = now, s.watchFrames = 0;
+            }
+            break;
+        }
+        pad = s.modes.ResumePad(pad);
         // Hold Y to put the board away. The press still reaches Skate, so
         // it steps off first, then puts the board away while Y stays down.
         // Only a press made while skating counts; a Y held at entry does not.
@@ -2476,6 +2656,12 @@ void LifecycleFrame(Session& s, const Config& cfg, bool f6) {
         // GTA owns the player until it is back on foot; the menu,
         // a vehicle, death or a long action keep GTA in charge for good.
         Track(s, false);
+        if (instantSkate && player == s.ped && Call<BOOL>(gta::DOES_ENTITY_EXIST, player)) {
+            s.delegation = Session::Delegation::None;
+            SetState(s, LifeState::Ready, "instant skate during GTA action");
+            TryEnter(s, cfg, false);
+            break;
+        }
         if (f6) {
             SetState(s, LifeState::Ready, "delegation ended by the player");
             break;
@@ -2799,10 +2985,27 @@ void ScriptMain() {
         at = end + 1;
     }
     size_t lineIndex = 0;
+    bool instantSkateChordWas = false;
     for (;;) {
         const double workStart = monitor.Now();
         LapStart();
         const bool f6 = g_toggleRequested.exchange(false);
+        const auto raw = static_cast<std::uint16_t>(RawPadButtons());
+        // R3 + left is free alongside the existing R3 + right/up modal tools.
+        // Use the permissive entry path so a jump or motorcycle dismount keeps
+        // its current velocity when Skate takes over.
+        const bool instantSkateDown = (raw & 0x0084u) == 0x0084u;
+        const bool instantSkate = instantSkateDown && !instantSkateChordWas && !menu::IsOpen() &&
+                                  s.state != LifeState::Skating && s.state != LifeState::Entering;
+        instantSkateChordWas = instantSkateDown;
+        const bool wasModal = s.modes.Active();
+        s.modes.SetLogger(Log);
+        s.modes.Chords(raw, s.state == LifeState::Skating, menu::IsOpen());
+        if (wasModal && !s.modes.Active()) s.placedValid = false;
+        if (Call<BOOL>(gta::DOES_ENTITY_EXIST, Call<Ped>(gta::PLAYER_PED_ID)))
+            PortableWeaponWheel(s, Call<Ped>(gta::PLAYER_PED_ID),
+                                s.state == LifeState::Skating || s.state == LifeState::Entering ? 0 : raw,
+                                cfg.life.menuButton);
         {
             static bool showList = false;
             static DWORD nextFetch = 0;
@@ -2843,7 +3046,7 @@ void ScriptMain() {
             }
         }
         if (g_runtime.IsLoaded()) {
-            LifecycleFrame(s, cfg, f6);
+            LifecycleFrame(s, cfg, f6, instantSkate);
             if (s.aiming && s.state != LifeState::Skating) StopAim(s, false);
             if (s.wheelOpen && s.state != LifeState::Skating) {
                 s.wheelOpen = g_weaponWheel = false;
@@ -2855,12 +3058,13 @@ void ScriptMain() {
             Notify(s, "runtime unavailable: " + error);
         }
 
-        if (!s.message.empty() && GetTickCount() < s.messageUntil) {
+        const bool replayActive = s.modes.Current() == skatemodes::Modes::Tool::Replay;
+        if (replayActive) Call<void>(0x719FF505F097FD20ULL); // HIDE_HUD_AND_RADAR_THIS_FRAME
+        if (!replayActive && !s.message.empty() && GetTickCount() < s.messageUntil) {
             Text(s.message.c_str(), 0.5f, 0.88f, 0.4f, 255, 255, 255, true);
         }
-        hudoverlay::Tick(s.state == LifeState::Skating);
+        hudoverlay::Tick(s.state == LifeState::Skating && !replayActive);
         Lap(kPartHud);
-        const auto raw = static_cast<std::uint16_t>(RawPadButtons());
         if (s.board.Pressed(raw, cfg.life.menuButton)) g_menuToggle.store(true);
         // GTA's interaction menu (INPUT_INTERACTION_MENU, Back) shares Back with the board's
         // weapon wheel and the menu chord: blocked while either is held and just after.
@@ -2873,9 +3077,14 @@ void ScriptMain() {
             if (recordsui::Showing()) recordsui::NextPage();  // '/' also closes the records board
             else menu::Toggle();
         }
+        if (menu::IsOpen() && s.modes.Active()) {
+            s.modes.Close();
+            s.placedValid = false;
+        }
         menu::Tick();
+        if (menu::IsOpen()) s.modes.DrawMenuHints();
         Lap(kPartMenu);
-        recordsui::Tick(s.state == LifeState::Skating,
+        if (!replayActive) recordsui::Tick(s.state == LifeState::Skating,
                         g_hallOfMeatOn && std::string_view(s.last.state_utf8).rfind("Wipeout", 0) == 0);
         if (s.state != LifeState::Skating) boardnative::Tick(false, SvBoardPose{}), boardstencil::SetActive(false);
         Lap(kPartRecords);

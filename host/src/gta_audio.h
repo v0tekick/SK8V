@@ -46,5 +46,8 @@ void Tick(bool skating);
 void Stop();
 // Script thread: applies AudioGtaGainDb now (the menu saves it to the INI).
 void SetGainDb(float db);
+// Use the existing game-time PCM history while the local replay is open.
+// The timeline is sampled on the script thread; the audio feeder reads it.
+void ReplayAudio(bool active, bool playing, std::uint32_t gameMs);
 
 } // namespace gtaaudio

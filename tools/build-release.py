@@ -35,7 +35,8 @@ TOOLS = ['prepare.py', 'gta_extract.py', 'xiso.py', 'setup_engine.py', '_common.
          'SkateVLegacy.ini.template', 'board-wheel-icon.bin', 'setup-wizard.ps1',
          'get-python.ps1']
 BINARIES = ['skate-xma.exe', 'xex_image.exe', 'skatev-ped-export.exe', 'live_clip.exe', 'skatev-world-cache.exe', 'sk8v-rpf.exe']
-FILES = {'LICENSE': 'LICENSE', 'NOTICE': 'NOTICE', 'README.md': 'README.md', 'upstreams.lock.json': 'upstreams.lock.json',
+FILES = {'LICENSE': 'LICENSE', 'NOTICE': 'NOTICE', 'README.md': 'README.md',
+         'CHANGELOG-FORK.md': 'CHANGELOG-FORK.md', 'upstreams.lock.json': 'upstreams.lock.json',
          'host/src/live_clip_layout.h': 'host/src/live_clip_layout.h',  # prepare checks the clip against it
          'rust/skate-xma/COPYING.LGPL': 'rust/skate-xma/COPYING.LGPL',
          'build/package/SkateVLegacy.asi': 'build/package/SkateVLegacy.asi',

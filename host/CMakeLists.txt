@@ -12,6 +12,8 @@ endif()
 
 add_library(SkateVLegacy SHARED
   src/main.cpp
+  src/skate_modes.cpp
+  src/replay_fx.cpp
   src/lifecycle.cpp
   src/runtime_bridge.cpp
   src/dynamic_world.cpp

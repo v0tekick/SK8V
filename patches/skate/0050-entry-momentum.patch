@@ -1,0 +1,30 @@
+diff --git a/crates/skate-host/src/physics/bridge/lifecycle.rs b/crates/skate-host/src/physics/bridge/lifecycle.rs
+--- a/crates/skate-host/src/physics/bridge/lifecycle.rs
++++ b/crates/skate-host/src/physics/bridge/lifecycle.rs
+@@ -86,2 +86,26 @@ impl Session {
+     }
+ }
++
++impl Session {
++    /// GTA -> Skate hand-off: the original teleport clears physical rates.
++    /// After that reset, seed every physical body and the observations used by
++    /// the first Skate step from GTA's world-space velocity (already mapped to
++    /// Skate axes by the runtime). Skate's own solver owns subsequent motion.
++    pub fn skatev_set_entry_velocity(&mut self, velocity: [f32; 3]) {
++        if !velocity.iter().all(|v| v.is_finite()) {
++            return;
++        }
++        let v = skate_core::math::Vector3::new(velocity[0], velocity[1], velocity[2]);
++        for body in self.skater.skeleton.bodies_mut() {
++            body.rates.linear_velocity = v;
++        }
++        for body in self.physics.board.bodies_mut() {
++            body.rates.linear_velocity = v;
++        }
++        let observed = [velocity[0], velocity[1], velocity[2], 0.0];
++        self.skater.animated_skeleton.motion.velocity_world = observed;
++        self.skater.centre_of_mass_output.velocity = observed;
++        self.skater.player_input.processed.vectors_544_560_592_608[3] =
++            observed.map(f32::to_bits);
++    }
++}

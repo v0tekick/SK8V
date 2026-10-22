@@ -52,11 +52,11 @@ function Set-Flat($button, $back, $fore) {
 }
 
 $form = New-Object Windows.Forms.Form -Property @{
-  Text = 'SK8V Setup'; ClientSize = '640,420'; StartPosition = 'CenterScreen'; FormBorderStyle = 'FixedSingle'
+  Text = 'SK8V Story Fork Setup'; ClientSize = '640,420'; StartPosition = 'CenterScreen'; FormBorderStyle = 'FixedSingle'
   MaximizeBox = $false; Font = (New-Font 9.5); BackColor = (& $rgb 247 247 249); ForeColor = $ink
 }
 $header = Add Panel @{ Location = '0,0'; Size = '640,96'; BackColor = (& $rgb 20 20 24) }
-[void](Add Label @{ Text = 'SK8V'; Location = '22,14'; AutoSize = $true; Font = (New-Font 24 'Bold'); ForeColor = 'White' } $header)
+[void](Add Label @{ Text = 'SK8V STORY FORK'; Location = '22,14'; AutoSize = $true; Font = (New-Font 21 'Bold'); ForeColor = 'White' } $header)
 [void](Add Label @{ Text = 'Skate 3 in GTA V Story Mode'; Location = '26,60'; AutoSize = $true; ForeColor = (& $rgb 170 170 180) } $header)
 [void](Add Panel @{ Dock = 'Bottom'; Height = 3; BackColor = $accent } $header)
 

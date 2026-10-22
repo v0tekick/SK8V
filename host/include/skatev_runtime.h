@@ -4,7 +4,7 @@
 
 // Mirrors rust/skatev-runtime/src/lib.rs. Layout is asserted on both sides
 // (`abi_layout_matches_header` in Rust, static_asserts here).
-#define SKATEV_ABI_VERSION 8u
+#define SKATEV_ABI_VERSION 9u
 
 enum SvStatus : std::uint32_t {
     SV_STATUS_LOADING = 0,
@@ -125,9 +125,11 @@ struct SvInput {
 
 struct SvSpawn {
     std::uint32_t size;
-    SvVec3 position; // GTA ground contact point
+    SvVec3 position; // GTA ped feet, including altitude when airborne
     float heading_degrees;
     float aspect_ratio;
+    SvVec3 velocity; // GTA world space, m/s, sampled before clearing GTA tasks
+    std::uint32_t airborne; // start on the board when entering from an airborne GTA state
 };
 
 struct SvOutput {
@@ -207,7 +209,9 @@ static_assert(offsetof(SvPad, buttons) == 8);
 static_assert(offsetof(SvPad, left_x) == 12);
 static_assert(sizeof(SvInput) == 32);
 static_assert(offsetof(SvInput, pad) == 12);
-static_assert(sizeof(SvSpawn) == 24);
+static_assert(sizeof(SvSpawn) == 40);
+static_assert(offsetof(SvSpawn, velocity) == 24);
+static_assert(offsetof(SvSpawn, airborne) == 36);
 static_assert(sizeof(SvOutput) == 184);
 static_assert(offsetof(SvOutput, tick) == 8);
 static_assert(offsetof(SvOutput, skater_heading_degrees) == 44);

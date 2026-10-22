@@ -18,6 +18,7 @@
 #include <vector>
 #include "hud_renderer.h"
 #include "xray_renderer.h"
+#include "replay_fx.h"
 #include "natives.h"
 #include "skatev_runtime.h"
 #include "thread_census.h"
@@ -122,6 +123,7 @@ void Present(void* swapChainPtr) {
             xray.camera = p.xray.camera;
         }
     }
+    replayfx::Present(sc); // lens/post effect on the world, before Skate's HUD
     xrayrender::Present(sc, xray); // under the HUD
     hudrender::Present(sc, frame);
 }
@@ -328,6 +330,7 @@ void Shutdown(bool processExit) {
     g.stopping.store(true);
     if (g.registered) {
         presentCallbackUnregister(OnPresent);
+        replayfx::Stop();
         g.registered = false;
     }
     g.enabled = false;

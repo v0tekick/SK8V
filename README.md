@@ -1,6 +1,8 @@
 ![SK8V Gameplay](media/sk8v.webp)
 
-# SK8V
+# SK8V Story Mode Fork
+
+Based on Becaring's SK8V 1.1.9. This installer prepares data from **your own** GTA V Legacy and Skate 3 copies, then installs the Story Mode fork. It does not contain the games or ScriptHookV.
 
 **Skate 3 gameplay. GTA V's open world.**
 
@@ -19,7 +21,7 @@ SK8V brings *Skate 3*'s Flick-It controls, board/skater physics, grinds, manuals
 
 ## Install
 
-1. Download and extract the latest **SK8V release ZIP** from [Releases](../../releases/latest), **not** GitHub's Source code ZIP.
+1. Extract this fork's release ZIP to a normal folder. Do not run setup from inside the ZIP.
 2. Close GTA V and run **`SK8V Setup.cmd`**. (If your GTA installation is in a protected folder (Program Files, etc.) setup will offer to restart as administrator.)
 3. Select your Skate 3 disc, choose **Regular** or **Goofy** stance, and press **Install**. Setup detects your GTA V folder when possible.
 4. Launch GTA V Legacy **Story Mode with BattlEye disabled**. Select the **skateboard** in GTA's weapon wheel, then press `Y` to mount it.
@@ -52,6 +54,20 @@ python tools/prepare.py --skate "<Skate 3.iso or folder>" --gta "<GTA V folder>"
 
 Swimming switches to GTA automatically and returns to Skate afterward. **Hall of Meat is on by default** and can be disabled in the SK8V menu, alongside other gameplay settings.
 
+### Fork controls
+
+| Input | Action |
+|---|---|
+| RS click + D-pad left | Enter Skate immediately, including during a jump or fall; carries the character's momentum |
+| Hold LB outside Skate | Open the fork's owned-weapon wheel, including in a vehicle |
+| RS click + D-pad right while skating | Open Object Dropper |
+| RS click + D-pad up while skating | Open the 30-second Replay |
+| RS click + LT/RT during Replay | Adjust camera FOV smoothly |
+| Ctrl+Shift+E during Replay | Cycle camera effects, including GoPro, VHS and doorbell fisheye |
+| Ctrl+Shift+H during Replay | Hide or show all HUD |
+
+Object Dropper uses GTA creator/stunt props as substitutes for Skate 3's full park catalog. Replay is the fork's own rolling recording, not Rockstar Editor.
+
 ### Unable to save settings in the menu?
 
 1. Right-click your game install folder and select Properties.
@@ -69,7 +85,7 @@ Swimming switches to GTA automatically and returns to Skate afterward. **Hall of
 
 ## Contributing
 
-SK8V doesn’t currently accept pull requests. Bug reports and feature requests go in issues, logs are appreciated!
+This fork is based on [Becaring's original SK8V](https://github.com/becaring/SK8V). Bug reports and feature requests for fork changes belong in this fork's issues.
 
 ## Support Me
 [<img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" height="40">](https://buymeacoffee.com/becaring) [<img src="https://storage.ko-fi.com/cdn/kofi3.png?v=3" height="36">](https://ko-fi.com/becaring)
@@ -92,4 +108,4 @@ Run BOOTSTRAP.bat to build the code, then follow BUILDING.md to package a releas
 
 ## License
 
-Original SK8V code is [Apache-2.0](LICENSE); third-party components keep their own licenses and are credited in [NOTICE](NOTICE). SK8V is an unofficial fan project, unaffiliated with EA, Rockstar Games, or Take-Two Interactive. No GTA V or Skate 3 retail assets, executables, keys, or proprietary SDK redistributables are included; supply your own game copies.
+Original SK8V code is [Apache-2.0](LICENSE); third-party components keep their own licenses and are credited in [NOTICE](NOTICE). Fork changes were developed with OpenAI Codex. SK8V is an unofficial fan project, unaffiliated with EA, Rockstar Games, or Take-Two Interactive. No GTA V or Skate 3 retail assets, executables, keys, or proprietary SDK redistributables are included; supply your own game copies.

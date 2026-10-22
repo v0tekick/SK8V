@@ -71,7 +71,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use bevy_math::Vec3;
 use worker::{Job, Pad, Shared};
 
-pub const SKATEV_ABI_VERSION: u32 = 8;
+pub const SKATEV_ABI_VERSION: u32 = 9;
 /// Mashup lock commit; its skate/ crates come from donor cb79689.
 const SKATE_SOURCE: &str = "2010-rust-rewrite-mashup@ab43b8a9 (skate cb7968930)";
 
@@ -238,10 +238,12 @@ pub struct SvInput {
 #[derive(Clone, Copy, Default, Debug)]
 pub struct SvSpawn {
     pub size: u32,
-    /// GTA world position the board is placed at (ground contact).
+    /// GTA ped feet in world space, including altitude when airborne.
     pub position: SvVec3,
     pub heading_degrees: f32,
     pub aspect_ratio: f32,
+    pub velocity: SvVec3,
+    pub airborne: u32,
 }
 
 #[repr(C)]
@@ -1449,7 +1451,8 @@ unsafe fn request_activate(rt: *mut c_void, spawn: *const SvSpawn, offboard: boo
         return 0;
     }
     let p = Vec3::new(s.position.x, s.position.y, s.position.z);
-    if !p.is_finite() || !s.heading_degrees.is_finite() {
+    let velocity = Vec3::new(s.velocity.x, s.velocity.y, s.velocity.z);
+    if !p.is_finite() || !velocity.is_finite() || !s.heading_degrees.is_finite() {
         return 0;
     }
     {
@@ -1464,7 +1467,8 @@ unsafe fn request_activate(rt: *mut c_void, spawn: *const SvSpawn, offboard: boo
             spawn: p,
             heading: s.heading_degrees,
             aspect: s.aspect_ratio,
-            offboard,
+            offboard: offboard && s.airborne == 0,
+            velocity,
         })
         .is_ok() as u32
 }
@@ -1836,7 +1840,9 @@ mod tests {
         assert_eq!(offset_of!(SvPad, left_x), 12);
         assert_eq!(size_of::<SvInput>(), 32);
         assert_eq!(offset_of!(SvInput, pad), 12);
-        assert_eq!(size_of::<SvSpawn>(), 24);
+        assert_eq!(size_of::<SvSpawn>(), 40);
+        assert_eq!(offset_of!(SvSpawn, velocity), 24);
+        assert_eq!(offset_of!(SvSpawn, airborne), 36);
         assert_eq!(size_of::<SvOutput>(), 184);
         assert_eq!(offset_of!(SvOutput, tick), 8);
         assert_eq!(offset_of!(SvOutput, skater_heading_degrees), 44);

@@ -115,6 +115,11 @@ std::atomic<bool> g_run{false};
 void Record(int slot, const float* mix, int frames);
 void EditorPlay(float* out, int frames);
 std::atomic<bool> g_editorPlay{false}; // the board stream plays the clip at the editor's playhead
+std::atomic<bool> g_replayActive{false}, g_replayPlaying{false};
+std::atomic<std::uint32_t> g_replayGameMs{0};
+std::atomic<std::uint64_t> g_replayAtMs{0};
+std::int64_t g_replayCursor = -1; // audio feeder only
+void ReplayPlay(float* out, int frames);
 
 // ---- runtime --------------------------------------------------------------
 SvAudioEmitter Info(int i, bool* have = nullptr) {
@@ -129,6 +134,13 @@ void AddSource(int i, float* mix, int frames) {
     if (g_paused.load(std::memory_order_relaxed)) return;
     Slot& s = g_slots[i];
     static thread_local float buf[kChunk];
+    if (g_replayActive.load(std::memory_order_acquire)) {
+        if (i == SV_AUDIO_EMITTER_BOARD) {
+            ReplayPlay(buf, frames);
+            for (int k = 0; k < frames; ++k) mix[k] += buf[k];
+        }
+        return;
+    }
     if (i == SV_AUDIO_EMITTER_BOARD && g_editorPlay.load()) {
         EditorPlay(buf, frames);
         for (int k = 0; k < frames; ++k) mix[k] += buf[k];
@@ -544,13 +556,29 @@ double NowMs() {
 
 // Feeder: a stream's PCM at the game time it plays.
 void Record(int slot, const float* mix, int frames) {
-    if (!g_record || !g_recording.load(std::memory_order_relaxed)) return;
+    if (!g_record || !g_recording.load(std::memory_order_relaxed) || g_replayActive.load()) return;
     const std::uint64_t late = std::min<std::uint64_t>(GetTickCount64() - g_gameAt.load(), 100);
     const std::int64_t now = (static_cast<std::int64_t>(g_gameMs.load()) + static_cast<std::int64_t>(late)) * kRate / 1000;
     std::int64_t& c = g_recCursor[slot];
     if (c < 0 || std::llabs(c - now) > kRate / 20) c = now; // contiguous while within 50 ms of game time
     g_record->Add(c, mix, frames);
     c += frames;
+}
+
+void ReplayPlay(float* out, int frames) {
+    std::fill(out, out + frames, 0.0f);
+    if (!g_record || !g_replayPlaying.load(std::memory_order_acquire)) {
+        g_replayCursor = -1;
+        return;
+    }
+    const auto elapsed = std::min<std::uint64_t>(GetTickCount64() - g_replayAtMs.load(), 50);
+    const std::int64_t target = (static_cast<std::int64_t>(g_replayGameMs.load()) + elapsed) * kRate / 1000;
+    if (g_replayCursor < 0 || std::llabs(g_replayCursor - target) > kRate / 10)
+        g_replayCursor = target;
+    static thread_local std::int16_t pcm[kChunk];
+    g_record->Read(g_replayCursor, pcm, frames);
+    for (int i = 0; i < frames; ++i) out[i] = static_cast<float>(pcm[i]) / 32768.0f;
+    g_replayCursor += frames;
 }
 
 bool WriteAll(const std::wstring& path, const void* a, DWORD an, const void* b, DWORD bn) {
@@ -951,6 +979,7 @@ void Tick(bool skating) {
                               ((info.flags & SV_AUDIO_EMITTER_SOUNDING) || info.queued_frames > 0);
         if (sounding) s.lastSounding = now;
         want[i] = (skating && g_runtimeAudio) || (s.lastSounding && now - s.lastSounding < kLingerMs);
+        if (g_replayActive.load()) want[i] = i == SV_AUDIO_EMITTER_BOARD;
     }
     for (int i = 1; i < kSlots; ++i)
         if (g_slots[i].merged.load() && want[i]) want[0] = true;
@@ -1005,6 +1034,13 @@ void Tick(bool skating) {
             s_inside[i] = room.inside;
         }
     }
+}
+
+void ReplayAudio(bool active, bool playing, std::uint32_t gameMs) {
+    g_replayGameMs.store(gameMs);
+    g_replayAtMs.store(GetTickCount64());
+    g_replayPlaying.store(active && playing);
+    g_replayActive.store(active, std::memory_order_release);
 }
 
 void Stop() {

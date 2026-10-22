@@ -38,6 +38,7 @@ pub enum Job {
         spawn: Vec3,
         heading: f32,
         aspect: f32,
+        velocity: Vec3,
         /// Lifecycle entry: off the board, board in hand, awaiting player Y
         /// (patch 0007). False: the original on-board teleport.
         offboard: bool,
@@ -810,6 +811,7 @@ fn run(
                     heading,
                     aspect,
                     offboard,
+                    velocity,
                 } => {
                     set(shared, STATUS_ACTIVATING, "building Los Santos collision");
                     let t = std::time::Instant::now();
@@ -903,6 +905,7 @@ fn run(
                         s.activate(skate_spawn, skate_heading)?;
                         monitor.begin_onboard();
                     }
+                    s.skatev_set_entry_velocity(coords::to_skate(velocity).to_array());
                     for line in monitor.log.drain(..) {
                         log(&line);
                     }
