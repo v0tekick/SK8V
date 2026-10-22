@@ -1,5 +1,11 @@
 # SK8V Story Mode fork changelog
 
+## 1.1.9.2.1
+
+- Restored GTA's native vehicle aim, fire and weapon switching by disabling the fork's LB weapon selector in vehicles and during vehicle entry. An open selector is cancelled on entering a vehicle without changing the selected weapon.
+- Blocked the instant Skate controller chord and skateboard weapon selection while in or entering any vehicle. Both remain available immediately after exiting, including while airborne or in free fall.
+- Allowed instant Skate entry during an active cutscene. Once the runtime and area are ready, entry ends the cutscene and hands the restored player character to Skate. Mission scripts may not continue normally after an interrupted cinematic.
+
 ## 1.1.9.2
 
 - Added replay recording windows of 10, 15, 30, 45, 60, 90 and 120 seconds, selected with Ctrl+Shift+D during Replay. The rolling recorder retains the maximum two minutes, so a longer window is available immediately after changing it.

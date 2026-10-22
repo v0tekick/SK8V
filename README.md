@@ -58,8 +58,9 @@ Swimming switches to GTA automatically and returns to Skate afterward. **Hall of
 
 | Input | Action |
 |---|---|
-| RS click + D-pad left | Enter Skate immediately, including during a jump or fall; carries the character's momentum |
-| Hold LB outside Skate | Open the fork's owned-weapon wheel, including in a vehicle |
+| RS click + D-pad left | Enter Skate immediately, including during a jump, fall or active cutscene; carries the character's momentum |
+| Hold LB outside Skate while on foot or airborne | Open the fork's owned-weapon wheel; select Skateboard to enter Skate when the character is out of a vehicle |
+| LB while in or entering any vehicle | GTA's normal vehicle aim and fire controls; use GTA's normal vehicle weapon switching |
 | RS click + D-pad right while skating | Open Object Dropper |
 | RS click + D-pad up while skating | Open the 30-second Replay |
 | RS click + LT/RT during Replay | Adjust camera FOV smoothly from 5° to 160° |

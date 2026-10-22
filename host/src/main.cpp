@@ -687,9 +687,8 @@ struct Session {
     bool boardWeaponWas = false;
     DWORD boardGrantAt = 0;
     bool boardWeaponMissingLogged = false;
-    // GTA weapon wheel while falling, swimming, or in a vehicle. LB remains
-    // its ordinary wheel hold; this stores the selected fallback when GTA's
-    // own weapon task is unavailable in the current ped state.
+    // Owned-weapon wheel while off the board, including airborne states.
+    // Vehicles retain GTA's own aim, fire, and weapon controls.
     bool portableWheelOpen = false;
     bool portableWheelMoved = false;
     Hash portableWheelFirst = 0;
@@ -697,7 +696,6 @@ struct Session {
     Hash portableWheelPick = 0;
     int portableWheelSlice = -1;
     bool portableWheelCustom = false;
-    Hash pendingVehicleWeapon = 0; // GTA may defer a wheel choice until the ped exits a vehicle
     // Crimes (ReportShootings): last shots-fired report, last scan, peds already reported.
     DWORD shotsReportedAt = 0;
     DWORD crimeScanAt = 0;
@@ -1191,7 +1189,7 @@ bool AreaReady(const char*& why) {
 // Board action (or the menu): start Skate here. `strict` = controller (all GTA
 // guards); the menu skips the transient ones.
 void TryEnter(Session& s, const Config& cfg, bool strict) {
-    const Ped ped = Call<Ped>(gta::PLAYER_PED_ID);
+    Ped ped = Call<Ped>(gta::PLAYER_PED_ID);
     {
         SvOutput o{};
         g_runtime.Output(o);
@@ -1240,6 +1238,19 @@ void TryEnter(Session& s, const Config& cfg, bool strict) {
         Notify(s, "Skate runtime not ready: " + g_runtime.StatusText());
         SetState(s, LifeState::Ready, "runtime not ready");
         return;
+    }
+    if (Call<BOOL>(gta::IS_CUTSCENE_ACTIVE)) {
+        // The cutscene owns the camera and may use a duplicate player ped.
+        // End it only after the Skate runtime and area are ready, then use
+        // the restored gameplay ped for the position and velocity hand-off.
+        Call<void>(gta::STOP_CUTSCENE_IMMEDIATELY);
+        ped = Call<Ped>(gta::PLAYER_PED_ID);
+        Log("SkateV Legacy: cutscene ended for instant Skate entry");
+        if (!Call<BOOL>(gta::DOES_ENTITY_EXIST, ped) || lifecycle::EnteringVehicle(ped)) {
+            Notify(s, "can't skate now: player unavailable after cutscene", 2500);
+            SetState(s, LifeState::Ready, "player unavailable after cutscene");
+            return;
+        }
     }
     SvSpawn spawn{};
     spawn.size = sizeof(spawn);
@@ -1434,11 +1445,15 @@ PortableChoice PortableOwned(Ped ped, int slice) {
 }
 
 void PortableWeaponWheel(Session& s, Ped player, std::uint16_t buttons, unsigned menuChord) {
-    const bool inVehicle = Call<BOOL>(gta::IS_PED_IN_ANY_VEHICLE, player, 0);
-    if (s.pendingVehicleWeapon && !inVehicle) {
-        if (Call<BOOL>(gta::HAS_PED_GOT_WEAPON, player, s.pendingVehicleWeapon, 0))
-            Call<void>(gta::SET_CURRENT_PED_WEAPON, player, s.pendingVehicleWeapon, 1);
-        s.pendingVehicleWeapon = 0;
+    if (lifecycle::EnteringVehicle(player)) {
+        // LB aims from a vehicle. Cancel a wheel opened on foot without
+        // selecting its pending weapon, then leave GTA's controls untouched.
+        if (s.portableWheelOpen && !s.portableWheelCustom)
+            Call<void>(gta::HUD_FORCE_WEAPON_WHEEL, 0);
+        s.portableWheelOpen = false;
+        s.portableWheelPick = 0;
+        s.portableWheelSlice = -1;
+        return;
     }
     const bool menuHeld = menuChord && (buttons & menuChord) == menuChord;
     const bool held = (buttons & 0x0100) && !menuHeld && !menu::IsOpen() &&
@@ -1451,10 +1466,6 @@ void PortableWeaponWheel(Session& s, Ped player, std::uint16_t buttons, unsigned
                 s.portableWheelPick = s.portableWheelLast;
             if (s.portableWheelPick && Call<BOOL>(gta::HAS_PED_GOT_WEAPON, player, s.portableWheelPick, 0)) {
                 Call<void>(gta::SET_CURRENT_PED_WEAPON, player, s.portableWheelPick, 1);
-                if (inVehicle) {
-                    Call<BOOL>(gta::SET_CURRENT_PED_VEHICLE_WEAPON, player, s.portableWheelPick);
-                    s.pendingVehicleWeapon = s.portableWheelPick;
-                }
             }
             s.portableWheelOpen = false;
             Logf("SkateV Legacy: portable weapon wheel picked 0x%08X", static_cast<unsigned>(s.portableWheelPick));
@@ -1463,7 +1474,6 @@ void PortableWeaponWheel(Session& s, Ped player, std::uint16_t buttons, unsigned
     }
     if (!s.portableWheelOpen) {
         s.portableWheelOpen = true;
-        s.pendingVehicleWeapon = 0;
         s.portableWheelMoved = false;
         s.portableWheelFirst = s.portableWheelLast = 0;
         s.portableWheelPick = Call<Hash>(gta::GET_SELECTED_PED_WEAPON, player);
@@ -1483,10 +1493,9 @@ void PortableWeaponWheel(Session& s, Ped player, std::uint16_t buttons, unsigned
         }
     } else {
         // GTA may show an empty or inactive native wheel outside ordinary
-        // on-foot tasks. Use one owned-weapon selector consistently.
+        // on-foot tasks, including a fall. Use the owned-weapon selector there.
         Call<void>(gta::HUD_FORCE_WEAPON_WHEEL, 0);
         Call<void>(gta::DISABLE_CONTROL_ACTION, 0, 37, 1);
-        Call<void>(gta::DISABLE_CONTROL_ACTION, 0, 68, 1); // vehicle aim
         Call<void>(0x6806C51AD12B83B8ULL, 19); // hide native wheel
     }
     // In some GTA states the HUD opens without an active ped weapon task.
@@ -2528,7 +2537,8 @@ void LifecycleFrame(Session& s, const Config& cfg, bool f6, bool instantSkate) {
             Call<void>(gta::DISABLE_CONTROL_ACTION, 0, 23, 1); // INPUT_ENTER
             if (pad.buttons & 0x8000) s.suppressEnterUntil = now + 100;
         }
-        const bool wheel = s.portableWheelOpen ? false : BoardWeaponTick(s, player);
+        const bool boardPicked = BoardWeaponTick(s, player);
+        const bool wheel = !lifecycle::EnteringVehicle(player) && !s.portableWheelOpen && boardPicked;
         if (wheel) Log("SkateV Legacy: board picked in the weapon wheel");
         if (f6 || instantSkate || wheel) TryEnter(s, cfg, !(f6 || instantSkate));
         // Refused (vehicle, water, ...): no invisible weapon left in hand.
@@ -2996,7 +3006,8 @@ void ScriptMain() {
         // its current velocity when Skate takes over.
         const bool instantSkateDown = (raw & 0x0084u) == 0x0084u;
         const bool instantSkate = instantSkateDown && !instantSkateChordWas && !menu::IsOpen() &&
-                                  s.state != LifeState::Skating && s.state != LifeState::Entering;
+                                  s.state != LifeState::Skating && s.state != LifeState::Entering &&
+                                  !lifecycle::EnteringVehicle(Call<Ped>(gta::PLAYER_PED_ID));
         instantSkateChordWas = instantSkateDown;
         const bool wasModal = s.modes.Active();
         s.modes.SetLogger(Log);

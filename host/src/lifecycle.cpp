@@ -34,13 +34,12 @@ const char* Blocked(Ped ped, bool strict, const Settings& settings) {
     if (Call<BOOL>(gta::IS_ENTITY_DEAD, ped, 0) || Call<BOOL>(gta::IS_PED_DEAD_OR_DYING, ped, 1)) return "dead";
     if (EnteringVehicle(ped)) return "in or entering a vehicle";
     if (Call<BOOL>(gta::IS_PAUSE_MENU_ACTIVE)) return "paused";
-    if (Call<BOOL>(gta::IS_CUTSCENE_ACTIVE)) return "cutscene";
     if (Call<BOOL>(gta::IS_PLAYER_SWITCH_IN_PROGRESS)) return "character switch";
     if (Call<BOOL>(gta::GET_IS_LOADING_SCREEN_ACTIVE) || !Call<BOOL>(gta::IS_SCREEN_FADED_IN)) return "loading / faded";
     if (Call<BOOL>(gta::IS_ENTITY_ATTACHED, ped)) return "attached";
     // Director Mode raises the mission flag for its whole session; it is free
     // play, so only real missions are refused. joaat("director_mode").
-    if (!settings.inMissions && Call<BOOL>(gta::GET_MISSION_FLAG) &&
+    if (!settings.inMissions && !Call<BOOL>(gta::IS_CUTSCENE_ACTIVE) && Call<BOOL>(gta::GET_MISSION_FLAG) &&
         Call<int>(gta::GET_NUMBER_OF_THREADS_RUNNING_THE_SCRIPT_WITH_THIS_HASH, 0xCAC8014Fu) == 0)
         return "mission running (BoardActionInMissions=0)";
     // The hand-off captures GTA's live pose and velocity before clearing its
