@@ -64,7 +64,7 @@ Swimming switches to GTA automatically and returns to Skate afterward. **Hall of
 | RS click + D-pad right while skating | Open Object Dropper |
 | RS click + D-pad up while skating | Open the 30-second Replay |
 | Y during Replay | Cycle follow, free and phone operator cameras |
-| Left/right sticks in phone camera | Walk the phone operator / aim the handheld view |
+| Left/right sticks in phone camera | Move the phone operator from a precise walk to a run at full stick / aim the handheld view |
 | RS click + LT/RT during Replay | Adjust camera FOV smoothly from 5° to 160° |
 | Ctrl+Shift+D during Replay | Cycle the recording window: 10, 15, 30, 45, 60, 90 or 120 seconds |
 | Ctrl+Shift+E during Replay | Cycle 11 effects: clean, GoPro, VHS, film noir, doorbell, VHS 2, Super 8, Sunset, Night Spot, Bleach Bypass and Early Digital |

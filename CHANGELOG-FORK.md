@@ -1,5 +1,10 @@
 # SK8V Story Mode fork changelog
 
+## 1.1.9.3.1
+
+- Restored the phone camera operator's world collision and requested ground collision before spawning, using the detected ground height when available. The operator no longer has the collision-disabled fall through the map.
+- Increased phone operator movement from a careful walk near stick center to a run at full left-stick deflection.
+
 ## 1.1.9.3
 
 - Object Dropper placements now feed their exact collision geometry through the same lip finder as Los Santos and register qualifying edges as Skate grind splines. Normal grind admission and scoring can then apply to ledges while ramps remain transitions.

@@ -135,11 +135,16 @@ void Modes::PhoneCamera(const SvPad& pad, int cam, const SvOutput& frame, float 
         const float yaw = frame.skater_heading_degrees * 0.0174532925f;
         const float x = frame.skater_position.x + std::sin(yaw)*3.0f;
         const float y = frame.skater_position.y - std::cos(yaw)*3.0f;
-        filmer_ = Call<int>(gta::CREATE_PED, 4, filmerModel_, x, y, frame.skater_position.z,
+        Call<void>(gta::REQUEST_COLLISION_AT_COORD, x, y, frame.skater_position.z);
+        float spawnZ = frame.skater_position.z;
+        float groundZ = spawnZ;
+        if (Call<BOOL>(gta::GET_GROUND_Z_FOR_3D_COORD, x, y, spawnZ + 4.0f, &groundZ, false, false))
+            spawnZ = groundZ + 0.15f;
+        filmer_ = Call<int>(gta::CREATE_PED, 4, filmerModel_, x, y, spawnZ,
                             frame.skater_heading_degrees, false, false);
         if (!filmer_ || !Call<BOOL>(gta::DOES_ENTITY_EXIST, filmer_)) { filmer_ = 0; CameraFrom(frame, cam, 1.0f); return; }
         Call<void>(gta::SET_ENTITY_AS_MISSION_ENTITY, filmer_, true, false);
-        Call<void>(gta::SET_ENTITY_COLLISION, filmer_, false, false);
+        Call<void>(gta::SET_ENTITY_COLLISION, filmer_, true, true);
         cameraYaw_ = frame.skater_heading_degrees + 180.0f;
         cameraPitch_ = 0.0f;
     }
@@ -177,8 +182,10 @@ void Modes::PhoneCamera(const SvPad& pad, int cam, const SvOutput& frame, float 
     if (now - lastFilmerMoveMs_ > 250 && (std::abs(dx)+std::abs(dy) > 0.02f)) {
         float targetZ = p.z;
         Call<BOOL>(gta::GET_GROUND_Z_FOR_3D_COORD, p.x+dx*2.0f, p.y+dy*2.0f, p.z+4.0f, &targetZ, false, false);
+        const float travel = std::clamp(std::sqrt(dx*dx+dy*dy), 0.0f, 1.0f);
+        const float moveSpeed = std::clamp(travel * 2.0f, 0.25f, 2.0f); // 1 = walk, 2 = run.
         Call<void>(gta::TASK_GO_STRAIGHT_TO_COORD, filmer_, p.x+dx*2.0f, p.y+dy*2.0f, targetZ,
-                   std::clamp(std::sqrt(dx*dx+dy*dy),0.25f,1.0f), -1, cameraYaw_+180.0f, 0.05f);
+                   moveSpeed, -1, cameraYaw_+180.0f, 0.05f);
         lastFilmerMoveMs_ = now;
     }
     if (lastFilmerMoveMs_ && now-lastFilmerMoveMs_ > 250 && std::abs(dx)+std::abs(dy) <= 0.02f) {
