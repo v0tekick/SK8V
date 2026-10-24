@@ -1,5 +1,9 @@
 # SK8V Story Mode fork changelog
 
+## 1.1.9.3.2
+
+- Anchored the phone camera to the operator's animated neck bone, slightly below head level, instead of a fixed 1.55 m offset above the ped's entity position.
+
 ## 1.1.9.3.1
 
 - Restored the phone camera operator's world collision and requested ground collision before spawning, using the detected ground height when available. The operator no longer has the collision-disabled fall through the map.

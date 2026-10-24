@@ -195,7 +195,10 @@ void Modes::PhoneCamera(const SvPad& pad, int cam, const SvOutput& frame, float 
     const float t = static_cast<float>(now)*0.001f;
     const float swayX = std::sin(t*7.3f)*0.010f + std::sin(t*13.1f)*0.004f;
     const float swayY = std::sin(t*5.7f)*0.008f;
-    Call<void>(gta::SET_CAM_COORD, cam, p.x + swayX, p.y + swayY, p.z + 1.55f + std::sin(t*4.1f)*0.008f);
+    constexpr int NeckBone = 0x9995; // SKEL_Neck_1; use its world position, not a fixed offset above the ped.
+    const Vector3 neck = Call<Vector3>(gta::GET_PED_BONE_COORDS, filmer_, NeckBone, 0.0f, 0.0f, 0.0f);
+    Call<void>(gta::SET_CAM_COORD, cam, neck.x + swayX, neck.y + swayY,
+               neck.z - 0.03f + std::sin(t*4.1f)*0.008f);
     Call<void>(gta::SET_CAM_ROT, cam, cameraPitch_ + std::sin(t*8.9f)*0.16f, 0.0f,
                cameraYaw_ + std::sin(t*6.7f)*0.18f, 2);
 }
