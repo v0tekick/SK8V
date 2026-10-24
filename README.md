@@ -70,7 +70,7 @@ Swimming switches to GTA automatically and returns to Skate afterward. **Hall of
 | Ctrl+Shift+E during Replay | Cycle 11 effects: clean, GoPro, VHS, film noir, doorbell, VHS 2, Super 8, Sunset, Night Spot, Bleach Bypass and Early Digital |
 | Ctrl+Shift+H during Replay | Hide or show all HUD |
 
-Object Dropper offers ramps, benches, picnic tables, concrete barriers, pallet pads and box stacks. These are GTA props with prepared collision templates, as substitutes for Skate 3's full park catalog. Placed props now contribute valid top edges to Skate's grind spline provider, so ledges can trigger normal grind tricks and scoring. Replay retains up to two minutes of skating, with a finer left-stick movement curve near the center in free camera mode. The phone mode adds a local camera operator who holds a phone prop and can walk while filming. It is the fork's own rolling recording, not Rockstar Editor.
+Object Dropper offers ramps, benches, picnic tables, concrete barriers, pallet pads and box stacks. These are GTA props with prepared collision templates, as substitutes for Skate 3's full park catalog. Placed props now contribute valid top edges to Skate's grind spline provider, so ledges can trigger normal grind tricks and scoring. Replay retains up to two minutes of skating, with a finer left-stick movement curve near the center in free camera mode. The phone mode uses an invisible, walking camera operator to place its handheld view. It is the fork's own rolling recording, not Rockstar Editor.
 
 ### Unable to save settings in the menu?
 

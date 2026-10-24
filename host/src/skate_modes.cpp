@@ -145,6 +145,7 @@ void Modes::PhoneCamera(const SvPad& pad, int cam, const SvOutput& frame, float 
         if (!filmer_ || !Call<BOOL>(gta::DOES_ENTITY_EXIST, filmer_)) { filmer_ = 0; CameraFrom(frame, cam, 1.0f); return; }
         Call<void>(gta::SET_ENTITY_AS_MISSION_ENTITY, filmer_, true, false);
         Call<void>(gta::SET_ENTITY_COLLISION, filmer_, true, true);
+        Call<void>(gta::SET_ENTITY_VISIBLE, filmer_, false, false);
         cameraYaw_ = frame.skater_heading_degrees + 180.0f;
         cameraPitch_ = 0.0f;
     }
@@ -158,6 +159,7 @@ void Modes::PhoneCamera(const SvPad& pad, int cam, const SvOutput& frame, float 
                 const int hand = Call<int>(gta::GET_PED_BONE_INDEX, filmer_, 0xDEAD); // right hand
                 Call<void>(gta::ATTACH_ENTITY_TO_ENTITY, phone_, filmer_, hand,
                            0.04f, 0.02f, 0.01f, -90.0f, 0.0f, 0.0f, false, false, false, true, 2, true);
+                Call<void>(gta::SET_ENTITY_VISIBLE, phone_, false, false);
             } else phone_ = 0;
         }
     }

@@ -1,5 +1,9 @@
 # SK8V Story Mode fork changelog
 
+## 1.1.9.3.3
+
+- Made the phone camera operator and attached phone prop invisible, preventing their body and hands from appearing inside the neck-height replay view. The operator retains collision and controller movement.
+
 ## 1.1.9.3.2
 
 - Anchored the phone camera to the operator's animated neck bone, slightly below head level, instead of a fixed 1.55 m offset above the ped's entity position.
